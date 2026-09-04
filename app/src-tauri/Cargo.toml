@@ -1,0 +1,21 @@
+[package]
+name = "devkit-ui"
+version = "0.1.0"
+description = "Panel y bandeja de DevKit"
+authors = ["DevKit"]
+edition = "2021"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+devkit-core = { path = "../../crates/devkit-core" }
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
