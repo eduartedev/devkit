@@ -1,0 +1,14 @@
+[package]
+name = "devkit-cli"
+version.workspace = true
+edition.workspace = true
+description = "CLI de DevKit (start/stop/status/setup)"
+
+[[bin]]
+name = "devkit"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
+devkit-core = { path = "../devkit-core" }
