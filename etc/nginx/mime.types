@@ -1,0 +1,18 @@
+types {
+    text/html                             html htm shtml;
+    text/css                              css;
+    text/xml                              xml;
+    image/gif                             gif;
+    image/jpeg                            jpeg jpg;
+    application/javascript                js;
+    application/json                      json;
+    image/png                             png;
+    image/svg+xml                         svg;
+    image/webp                            webp;
+    application/font-woff                 woff;
+    font/woff2                            woff2;
+    application/octet-stream              bin exe dll;
+    application/zip                       zip;
+    application/pdf                       pdf;
+    text/plain                            txt;
+}

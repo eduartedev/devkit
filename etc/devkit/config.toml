@@ -1,0 +1,11 @@
+bind = "127.0.0.1"
+http_port = 8080
+https_port = 8443
+php_port = 9000
+mysql_port = 3306
+redis_port = 6379
+mailpit_smtp = 1025
+mailpit_ui = 8025
+php_version = "8.3"
+ssl = false
+tld = "test"
