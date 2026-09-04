@@ -1,0 +1,35 @@
+[package]
+name = "devkit-core"
+version.workspace = true
+edition.workspace = true
+description = "Núcleo de DevKit: supervisor, configs, sitios y setup portable"
+
+[dependencies]
+hex = "0.4"
+notify = "6"
+parking_lot = "0.12"
+rand = "0.8"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+ureq = { version = "2.12", features = ["tls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "devkit-probe"
+path = "src/bin/probe.rs"
