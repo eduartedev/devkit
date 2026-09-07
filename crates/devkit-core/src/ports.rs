@@ -1,8 +1,12 @@
 use crate::model::LOCALHOST;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortProcess {
@@ -52,10 +56,7 @@ impl PortCheck {
 
     pub fn summary(&self) -> String {
         match &self.owner {
-            PortOwner::Free => format!(
-                "{} :{} libre",
-                self.display_name, self.port
-            ),
+            PortOwner::Free => format!("{} :{} libre", self.display_name, self.port),
             PortOwner::Ours { pid, name } => format!(
                 "{} :{} ya es DevKit ({name}, PID {pid})",
                 self.display_name, self.port
@@ -95,34 +96,154 @@ impl PortCheck {
     }
 }
 
-/// Clasifica un puerto respecto a nuestro pidfile.
-pub fn classify_port(host: &str, port: u16, pidfile: &Path) -> PortOwner {
+/// Tabla de un solo `netstat` (puerto → PIDs).
+#[derive(Debug, Default, Clone)]
+pub struct ListeningTable {
+    by_port: HashMap<u16, Vec<u32>>,
+    names: HashMap<u32, String>,
+}
+
+impl ListeningTable {
+    pub fn capture() -> Self {
+        let mut table = Self::default();
+        let output = Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+        let Ok(out) = output else {
+            return table;
+        };
+        if !out.status.success() {
+            return table;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        table.by_port = parse_netstat_all_listening(&text);
+        let mut pids: Vec<u32> = table.by_port.values().flatten().copied().collect();
+        pids.sort_unstable();
+        pids.dedup();
+        for pid in pids {
+            if let Some(name) = process_name(pid) {
+                table.names.insert(pid, name);
+            }
+        }
+        table
+    }
+
+    pub fn listeners_for(&self, port: u16) -> Vec<PortProcess> {
+        self.by_port
+            .get(&port)
+            .into_iter()
+            .flatten()
+            .map(|pid| PortProcess {
+                pid: *pid,
+                name: self
+                    .names
+                    .get(pid)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".into()),
+            })
+            .collect()
+    }
+}
+
+struct PortCache {
+    at: Instant,
+    checks: Vec<PortCheck>,
+}
+
+fn port_cache() -> &'static Mutex<Option<PortCache>> {
+    static CACHE: OnceLock<Mutex<Option<PortCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+pub fn cached_port_checks() -> Option<Vec<PortCheck>> {
+    let guard = port_cache().lock();
+    guard.as_ref().map(|c| c.checks.clone())
+}
+
+pub fn cache_port_checks(checks: Vec<PortCheck>) {
+    *port_cache().lock() = Some(PortCache {
+        at: Instant::now(),
+        checks,
+    });
+}
+
+pub fn cached_port_checks_fresh(max_age: Duration) -> Option<Vec<PortCheck>> {
+    let guard = port_cache().lock();
+    guard.as_ref().and_then(|c| {
+        if c.at.elapsed() <= max_age {
+            Some(c.checks.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Clasificación ligera: solo TCP + pidfile (sin netstat). Ideal para el panel.
+pub fn classify_port_light(host: &str, port: u16, pidfile: &Path) -> PortOwner {
+    let our_pid = read_pidfile(pidfile);
     if !crate::health::is_port_open(host, port) {
-        // Limpia pidfile huérfano si el proceso ya no existe.
+        if let Some(pid) = our_pid {
+            if !process_alive_fast(pid) {
+                let _ = fs::remove_file(pidfile);
+            }
+        }
+        return PortOwner::Free;
+    }
+    if let Some(our) = our_pid {
+        if process_alive_fast(our) {
+            return PortOwner::Ours {
+                pid: our,
+                name: "devkit-service".into(),
+            };
+        }
+        let _ = fs::remove_file(pidfile);
+    }
+    // Puerto abierto sin nuestro pidfile: conflicto probable (detalle en check_ports).
+    PortOwner::Unknown
+}
+
+/// Clasifica un puerto respecto a nuestro pidfile (con tabla netstat opcional).
+pub fn classify_port(host: &str, port: u16, pidfile: &Path) -> PortOwner {
+    let table = ListeningTable::capture();
+    classify_port_with_table(host, port, pidfile, &table)
+}
+
+pub fn classify_port_with_table(
+    host: &str,
+    port: u16,
+    pidfile: &Path,
+    table: &ListeningTable,
+) -> PortOwner {
+    if !crate::health::is_port_open(host, port) {
         if let Some(pid) = read_pidfile(pidfile) {
-            if !process_alive(pid) {
+            if !process_alive_fast(pid) {
                 let _ = fs::remove_file(pidfile);
             }
         }
         return PortOwner::Free;
     }
 
-    let listeners = find_listeners(port);
-    let our_pid = read_pidfile(pidfile).filter(|pid| process_alive(*pid));
+    let listeners = table.listeners_for(port);
+    let our_pid = read_pidfile(pidfile).filter(|pid| process_alive_fast(*pid));
 
     if let Some(our) = our_pid {
         if listeners.iter().any(|p| p.pid == our) || listeners.is_empty() {
-            let name = process_name(our).unwrap_or_else(|| "devkit-service".into());
+            let name = table
+                .names
+                .get(&our)
+                .cloned()
+                .or_else(|| process_name(our))
+                .unwrap_or_else(|| "devkit-service".into());
             return PortOwner::Ours { pid: our, name };
         }
     }
 
     if listeners.is_empty() {
-        // TCP responde (p.ej. connect ok) pero netstat no listó LISTENING a tiempo.
         return PortOwner::Unknown;
     }
 
-    // Puerto ocupado por otros: descarta pidfile rancio.
     if our_pid.is_none() {
         let _ = fs::remove_file(pidfile);
     }
@@ -139,13 +260,30 @@ pub fn check_service_port(
     port: u16,
     pidfile: &Path,
 ) -> PortCheck {
+    let table = ListeningTable::capture();
+    check_service_port_with_table(service, display_name, host, port, pidfile, &table, true)
+}
+
+pub fn check_service_port_with_table(
+    service: &str,
+    display_name: &str,
+    host: &str,
+    port: u16,
+    pidfile: &Path,
+    table: &ListeningTable,
+    suggest: bool,
+) -> PortCheck {
     let host = if host.eq_ignore_ascii_case("localhost") {
         LOCALHOST
     } else {
         host
     };
-    let owner = classify_port(host, port, pidfile);
-    let suggested = suggest_alternates(port);
+    let owner = classify_port_with_table(host, port, pidfile, table);
+    let suggested = if suggest && owner.is_blocking() {
+        suggest_alternates(port)
+    } else {
+        Vec::new()
+    };
     let hint = match &owner {
         PortOwner::Free => "disponible".into(),
         PortOwner::Ours { .. } => "DevKit ya lo tiene en marcha".into(),
@@ -171,6 +309,21 @@ pub fn check_service_port(
         hint,
         suggested_ports: suggested,
     }
+}
+
+/// Un solo netstat para todos los servicios (uso en start/ports).
+pub fn check_many(
+    specs: &[(String, String, String, u16, std::path::PathBuf)],
+) -> Vec<PortCheck> {
+    let table = ListeningTable::capture();
+    let mut out = Vec::with_capacity(specs.len());
+    for (id, display, host, port, pidfile) in specs {
+        out.push(check_service_port_with_table(
+            id, display, host, *port, pidfile, &table, true,
+        ));
+    }
+    cache_port_checks(out.clone());
+    out
 }
 
 pub fn suggest_alternates(port: u16) -> Vec<u16> {
@@ -217,33 +370,18 @@ fn guess_stack(names: &[String]) -> String {
 }
 
 pub fn find_listeners(port: u16) -> Vec<PortProcess> {
-    let output = Command::new("netstat")
-        .args(["-ano", "-p", "tcp"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(out) = output else {
-        return Vec::new();
-    };
-    if !out.status.success() {
-        return Vec::new();
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut pids = parse_netstat_listening_pids(&text, port);
-    pids.sort_unstable();
-    pids.dedup();
-    pids.into_iter()
-        .filter_map(|pid| {
-            let name = process_name(pid).unwrap_or_else(|| "unknown".into());
-            Some(PortProcess { pid, name })
-        })
-        .collect()
+    ListeningTable::capture().listeners_for(port)
 }
 
 /// Extrae PIDs en estado LISTENING para `port` desde salida de `netstat -ano`.
 pub fn parse_netstat_listening_pids(netstat: &str, port: u16) -> Vec<u32> {
-    let needle = format!(":{port}");
-    let mut out = Vec::new();
+    parse_netstat_all_listening(netstat)
+        .remove(&port)
+        .unwrap_or_default()
+}
+
+pub fn parse_netstat_all_listening(netstat: &str) -> HashMap<u16, Vec<u32>> {
+    let mut map: HashMap<u16, Vec<u32>> = HashMap::new();
     for line in netstat.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -254,30 +392,29 @@ pub fn parse_netstat_listening_pids(netstat: &str, port: u16) -> Vec<u32> {
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
-        // TCP  127.0.0.1:3306  0.0.0.0:0  LISTENING  1234
         if parts.len() < 4 {
             continue;
         }
         let local = parts[1];
-        if !local_addr_has_port(local, &needle) {
+        let Some(port) = parse_local_port(local) else {
             continue;
-        }
+        };
         if let Ok(pid) = parts[parts.len() - 1].parse::<u32>() {
             if pid > 0 {
-                out.push(pid);
+                map.entry(port).or_default().push(pid);
             }
         }
     }
-    out
+    for v in map.values_mut() {
+        v.sort_unstable();
+        v.dedup();
+    }
+    map
 }
 
-fn local_addr_has_port(local: &str, needle: &str) -> bool {
-    // Coincide :3306 al final del host local (evita :33060).
-    if let Some(idx) = local.rfind(':') {
-        let port_part = &local[idx..];
-        return port_part.eq_ignore_ascii_case(needle);
-    }
-    false
+fn parse_local_port(local: &str) -> Option<u16> {
+    let idx = local.rfind(':')?;
+    local[idx + 1..].parse().ok()
 }
 
 pub fn read_pidfile(path: &Path) -> Option<u32> {
@@ -285,28 +422,33 @@ pub fn read_pidfile(path: &Path) -> Option<u32> {
     text.trim().parse().ok()
 }
 
-pub fn process_alive(pid: u32) -> bool {
+/// Comprueba si el PID existe sin lanzar tasklist (más barato en el panel).
+pub fn process_alive_fast(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
     #[cfg(windows)]
     {
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
-        let Ok(out) = out else {
-            return false;
-        };
-        let text = String::from_utf8_lossy(&out.stdout);
-        // "INFO: No tasks are running..." when missing
-        text.contains(&format!(",\"{pid}\",")) || text.contains(&format!(",{pid},"))
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        unsafe {
+            match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                Ok(handle) => {
+                    let _ = CloseHandle(handle);
+                    true
+                }
+                Err(_) => false,
+            }
+        }
     }
     #[cfg(not(windows))]
     {
         Path::new(&format!("/proc/{pid}")).exists()
     }
+}
+
+pub fn process_alive(pid: u32) -> bool {
+    process_alive_fast(pid)
 }
 
 pub fn process_name(pid: u32) -> Option<String> {
@@ -334,7 +476,6 @@ pub fn parse_tasklist_name(csv_line: &str, pid: u32) -> Option<String> {
         if line.is_empty() || line.to_ascii_uppercase().starts_with("INFO:") {
             continue;
         }
-        // "mysqld.exe","1234","Console","1","12,345 K"
         let cols: Vec<&str> = line.split(',').collect();
         if cols.len() < 2 {
             continue;
@@ -368,8 +509,8 @@ mod tests {
 "#;
         let pids = parse_netstat_listening_pids(sample, 3306);
         assert_eq!(pids, vec![4456]);
-        let pids8080 = parse_netstat_listening_pids(sample, 8080);
-        assert_eq!(pids8080, vec![7001]);
+        let all = parse_netstat_all_listening(sample);
+        assert_eq!(all.get(&8080), Some(&vec![7001]));
         assert!(parse_netstat_listening_pids(sample, 9999).is_empty());
     }
 
@@ -387,15 +528,23 @@ mod tests {
     fn classify_free_when_nothing_listens() {
         let dir = tempdir().unwrap();
         let pidfile = dir.path().join("x.pid");
-        // Pick a port that is free by binding then releasing.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert!(!is_port_open(LOCALHOST, port));
-        assert_eq!(
-            classify_port(LOCALHOST, port, &pidfile),
-            PortOwner::Free
-        );
+        assert_eq!(classify_port_light(LOCALHOST, port, &pidfile), PortOwner::Free);
+    }
+
+    #[test]
+    fn classify_light_unknown_without_pidfile() {
+        let dir = tempdir().unwrap();
+        let pidfile = dir.path().join("x.pid");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(is_port_open(LOCALHOST, port));
+        let owner = classify_port_light(LOCALHOST, port, &pidfile);
+        assert!(matches!(owner, PortOwner::Unknown));
+        drop(listener);
     }
 
     #[test]
@@ -407,10 +556,7 @@ mod tests {
         assert!(is_port_open(LOCALHOST, port));
         let owner = classify_port(LOCALHOST, port, &pidfile);
         match owner {
-            PortOwner::Foreign { processes } => {
-                assert!(!processes.is_empty() || true); // netstat may lag; Foreign or Unknown ok
-            }
-            PortOwner::Unknown => {}
+            PortOwner::Foreign { .. } | PortOwner::Unknown => {}
             other => panic!("esperado Foreign/Unknown, got {other:?}"),
         }
         drop(listener);
@@ -424,12 +570,8 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let our_pid = std::process::id();
         fs::write(&pidfile, our_pid.to_string()).unwrap();
-
-        // Inject via direct owner construction path: classify uses netstat.
-        // If netstat lists our PID for this port, Ours; else Foreign/Unknown.
-        // We still assert that having a live matching pidfile + open port does not yield Free.
-        let owner = classify_port(LOCALHOST, port, &pidfile);
-        assert_ne!(owner, PortOwner::Free);
+        let owner = classify_port_light(LOCALHOST, port, &pidfile);
+        assert!(matches!(owner, PortOwner::Ours { pid, .. } if pid == our_pid));
         drop(listener);
     }
 

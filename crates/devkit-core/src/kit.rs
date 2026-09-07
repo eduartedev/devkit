@@ -322,17 +322,88 @@ impl DevKit {
     }
 
     pub fn check_ports(&self) -> Result<Vec<PortCheck>> {
-        let mut checks = Vec::new();
-        for spec in self.specs()? {
-            checks.push(check_service_port(
-                &spec.id,
-                &spec.display_name,
-                &spec.bind_host,
-                spec.port,
-                &spec.pidfile,
-            ));
+        let specs = self.specs()?;
+        let rows: Vec<_> = specs
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    s.display_name.clone(),
+                    s.bind_host.clone(),
+                    s.port,
+                    s.pidfile.clone(),
+                )
+            })
+            .collect();
+        Ok(crate::ports::check_many(&rows))
+    }
+
+    /// Estado rápido para el panel (sin netstat en cada poll).
+    pub fn status_light(&self) -> Result<StackStatus> {
+        let specs = self.specs().unwrap_or_default();
+        let services: Vec<_> = specs
+            .iter()
+            .map(|s| self.supervisor.snapshot(s))
+            .collect();
+        let sites = scan_sites(&self.paths, &self.config)?;
+        let port_checks = crate::ports::cached_port_checks_fresh(std::time::Duration::from_secs(8))
+            .or_else(crate::ports::cached_port_checks)
+            .unwrap_or_default();
+        let mut warnings = Vec::new();
+        for check in &port_checks {
+            if check.is_conflict() {
+                warnings.push(check.summary());
+            }
         }
-        Ok(checks)
+        // Si no hay caché, marca Unknown en servicios sin bloquear la UI.
+        for s in &services {
+            if s.detail.contains("Revisar puertos") {
+                warnings.push(format!(
+                    "{} :{} parece ocupado — usa Revisar puertos",
+                    s.display_name, s.port
+                ));
+            }
+        }
+        Ok(StackStatus {
+            root: self.paths.root.clone(),
+            php_version: self.config.php_version.clone(),
+            services,
+            sites,
+            dns: self.last_dns.clone(),
+            warnings,
+            port_checks,
+        })
+    }
+
+    pub fn status(&self) -> Result<StackStatus> {
+        // Compat CLI: un escaneo completo de puertos (puede tardar 1–2s).
+        let mut st = self.status_light()?;
+        let port_checks = self.check_ports().unwrap_or_default();
+        st.warnings.clear();
+        for check in &port_checks {
+            if check.is_conflict() {
+                st.warnings.push(check.summary());
+            }
+        }
+        st.port_checks = port_checks;
+        // Refresca detalles de servicios con info rica si hay conflicto.
+        let specs = self.specs().unwrap_or_default();
+        st.services = specs
+            .iter()
+            .map(|s| self.supervisor.snapshot(s))
+            .collect();
+        for svc in &mut st.services {
+            if let Some(check) = st.port_checks.iter().find(|c| c.service == svc.id) {
+                if check.is_conflict() {
+                    svc.detail = check.summary();
+                    svc.status = ServiceStatus::Stopped;
+                } else if matches!(check.owner, crate::ports::PortOwner::Ours { .. }) {
+                    svc.status = ServiceStatus::Running;
+                    svc.detail = check.summary();
+                }
+            }
+        }
+        Ok(st)
     }
 
     pub fn start_all(&mut self, detach: bool) -> Result<StackStatus> {
@@ -431,31 +502,6 @@ impl DevKit {
                 .stop_mysql_admin(&spec, &self.paths.mysqladmin(), &pw);
         }
         self.supervisor.stop(&spec)
-    }
-
-    pub fn status(&self) -> Result<StackStatus> {
-        let specs = self.specs().unwrap_or_default();
-        let services: Vec<_> = specs
-            .iter()
-            .map(|s| self.supervisor.snapshot(s))
-            .collect();
-        let sites = scan_sites(&self.paths, &self.config)?;
-        let port_checks = self.check_ports().unwrap_or_default();
-        let mut warnings = Vec::new();
-        for check in &port_checks {
-            if check.is_conflict() {
-                warnings.push(check.summary());
-            }
-        }
-        Ok(StackStatus {
-            root: self.paths.root.clone(),
-            php_version: self.config.php_version.clone(),
-            services,
-            sites,
-            dns: self.last_dns.clone(),
-            warnings,
-            port_checks,
-        })
     }
 
     pub fn use_php(&mut self, version: &str) -> Result<()> {

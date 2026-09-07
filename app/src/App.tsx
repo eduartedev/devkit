@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -70,7 +70,11 @@ export default function App() {
   const [name, setName] = useState("");
   const [php, setPhp] = useState<string[]>([]);
 
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+
   const refresh = useCallback(async () => {
+    if (busyRef.current) return;
     try {
       const st = await invoke<Stack>("get_status");
       setStack(st);
@@ -81,7 +85,8 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 2500);
+    // Poll ligero cada 5s; no solapar con acciones (Start/Stop/…).
+    const id = setInterval(refresh, 5000);
     invoke<string[]>("php_versions").then(setPhp).catch(() => {});
     return () => clearInterval(id);
   }, [refresh]);

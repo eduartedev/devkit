@@ -6,119 +6,152 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-struct KitState(Mutex<DevKit>);
+struct KitState(Arc<Mutex<DevKit>>);
 
 fn map_err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-#[tauri::command]
-fn get_status(state: State<KitState>) -> Result<StackStatus, String> {
-    state.0.lock().status().map_err(map_err)
+async fn with_kit<T, F>(state: &KitState, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut DevKit) -> Result<T, String> + Send + 'static,
+{
+    let kit = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = kit.lock();
+        f(&mut guard)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn check_ports(state: State<KitState>) -> Result<StackStatus, String> {
-    state.0.lock().status().map_err(map_err)
+async fn get_status(state: State<'_, KitState>) -> Result<StackStatus, String> {
+    with_kit(&state, |kit| kit.status_light().map_err(map_err)).await
 }
 
 #[tauri::command]
-fn start_all(state: State<KitState>) -> Result<StackStatus, String> {
-    state.0.lock().start_all(true).map_err(map_err)
+async fn check_ports(state: State<'_, KitState>) -> Result<StackStatus, String> {
+    with_kit(&state, |kit| kit.status().map_err(map_err)).await
 }
 
 #[tauri::command]
-fn stop_all(state: State<KitState>) -> Result<StackStatus, String> {
-    state.0.lock().stop_all().map_err(map_err)
+async fn start_all(state: State<'_, KitState>) -> Result<StackStatus, String> {
+    with_kit(&state, |kit| kit.start_all(true).map_err(map_err)).await
 }
 
 #[tauri::command]
-fn start_service(state: State<KitState>, id: String) -> Result<StackStatus, String> {
-    let mut kit = state.0.lock();
-    kit.start_service(&id, true).map_err(map_err)?;
-    kit.status().map_err(map_err)
+async fn stop_all(state: State<'_, KitState>) -> Result<StackStatus, String> {
+    with_kit(&state, |kit| kit.stop_all().map_err(map_err)).await
 }
 
 #[tauri::command]
-fn stop_service(state: State<KitState>, id: String) -> Result<StackStatus, String> {
-    let mut kit = state.0.lock();
-    kit.stop_service(&id).map_err(map_err)?;
-    kit.status().map_err(map_err)
+async fn start_service(state: State<'_, KitState>, id: String) -> Result<StackStatus, String> {
+    with_kit(&state, move |kit| {
+        kit.start_service(&id, true).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn reload_sites(state: State<KitState>) -> Result<StackStatus, String> {
-    let mut kit = state.0.lock();
-    kit.reload_sites().map_err(map_err)?;
-    kit.status().map_err(map_err)
+async fn stop_service(state: State<'_, KitState>, id: String) -> Result<StackStatus, String> {
+    with_kit(&state, move |kit| {
+        kit.stop_service(&id).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn open_terminal(state: State<KitState>) -> Result<(), String> {
-    state.0.lock().open_terminal().map_err(map_err)
+async fn reload_sites(state: State<'_, KitState>) -> Result<StackStatus, String> {
+    with_kit(&state, |kit| {
+        kit.reload_sites().map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn adminer_url(state: State<KitState>) -> Result<String, String> {
-    Ok(state.0.lock().adminer_url())
+async fn open_terminal(state: State<'_, KitState>) -> Result<(), String> {
+    with_kit(&state, |kit| kit.open_terminal().map_err(map_err)).await
 }
 
 #[tauri::command]
-fn default_url(state: State<KitState>) -> Result<String, String> {
-    Ok(state.0.lock().default_url())
+async fn adminer_url(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| Ok(kit.adminer_url())).await
 }
 
 #[tauri::command]
-fn isolated_path(state: State<KitState>) -> Result<String, String> {
-    Ok(state.0.lock().isolated_path())
+async fn default_url(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| Ok(kit.default_url())).await
 }
 
 #[tauri::command]
-fn create_site(state: State<KitState>, kind: String, name: String) -> Result<StackStatus, String> {
-    let mut kit = state.0.lock();
-    kit.create_site(&kind, &name).map_err(map_err)?;
-    kit.status().map_err(map_err)
+async fn isolated_path(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| Ok(kit.isolated_path())).await
 }
 
 #[tauri::command]
-fn setup_stack(state: State<KitState>, full: bool, php: Option<String>) -> Result<Vec<String>, String> {
-    state
-        .0
-        .lock()
-        .setup(full, php.as_deref())
-        .map_err(map_err)
+async fn create_site(
+    state: State<'_, KitState>,
+    kind: String,
+    name: String,
+) -> Result<StackStatus, String> {
+    with_kit(&state, move |kit| {
+        kit.create_site(&kind, &name).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn php_versions(state: State<KitState>) -> Result<Vec<String>, String> {
-    let kit = state.0.lock();
-    let mut v = kit.php_versions().map_err(map_err)?;
-    if !v.contains(&kit.config.php_version) {
-        v.push(kit.config.php_version.clone());
-    }
-    Ok(v)
+async fn setup_stack(
+    state: State<'_, KitState>,
+    full: bool,
+    php: Option<String>,
+) -> Result<Vec<String>, String> {
+    with_kit(&state, move |kit| {
+        kit.setup(full, php.as_deref()).map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn use_php(state: State<KitState>, version: String) -> Result<StackStatus, String> {
-    let mut kit = state.0.lock();
-    kit.use_php(&version).map_err(map_err)?;
-    kit.status().map_err(map_err)
+async fn php_versions(state: State<'_, KitState>) -> Result<Vec<String>, String> {
+    with_kit(&state, |kit| {
+        let mut v = kit.php_versions().map_err(map_err)?;
+        if !v.contains(&kit.config.php_version) {
+            v.push(kit.config.php_version.clone());
+        }
+        Ok(v)
+    })
+    .await
 }
 
 #[tauri::command]
-fn enable_ssl(state: State<KitState>) -> Result<String, String> {
-    state.0.lock().enable_ssl().map_err(map_err)
+async fn use_php(state: State<'_, KitState>, version: String) -> Result<StackStatus, String> {
+    with_kit(&state, move |kit| {
+        kit.use_php(&version).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
-fn pack_portable(state: State<KitState>) -> Result<String, String> {
-    state
-        .0
-        .lock()
-        .pack(None)
-        .map(|p| p.display().to_string())
-        .map_err(map_err)
+async fn enable_ssl(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| kit.enable_ssl().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn pack_portable(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| {
+        kit.pack(None)
+            .map(|p| p.display().to_string())
+            .map_err(map_err)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -150,7 +183,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(KitState(Mutex::new(ui_kit)))
+        .manage(KitState(Arc::new(Mutex::new(ui_kit))))
         .invoke_handler(tauri::generate_handler![
             get_status,
             check_ports,
@@ -190,17 +223,26 @@ pub fn run() {
                     "show" => show_main(app),
                     "start" => {
                         if let Some(s) = app.try_state::<KitState>() {
-                            let _ = s.0.lock().start_all(true);
+                            let kit = s.0.clone();
+                            std::thread::spawn(move || {
+                                let _ = kit.lock().start_all(true);
+                            });
                         }
                     }
                     "stop" => {
                         if let Some(s) = app.try_state::<KitState>() {
-                            let _ = s.0.lock().stop_all();
+                            let kit = s.0.clone();
+                            std::thread::spawn(move || {
+                                let _ = kit.lock().stop_all();
+                            });
                         }
                     }
                     "term" => {
                         if let Some(s) = app.try_state::<KitState>() {
-                            let _ = s.0.lock().open_terminal();
+                            let kit = s.0.clone();
+                            std::thread::spawn(move || {
+                                let _ = kit.lock().open_terminal();
+                            });
                         }
                     }
                     "adminer" => {
@@ -211,7 +253,11 @@ pub fn run() {
                     }
                     "quit" => {
                         if let Some(s) = app.try_state::<KitState>() {
-                            let _ = s.0.lock().stop_all();
+                            let kit = s.0.clone();
+                            let _ = std::thread::spawn(move || {
+                                let _ = kit.lock().stop_all();
+                            })
+                            .join();
                         }
                         app.exit(0);
                     }

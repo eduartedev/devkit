@@ -46,21 +46,23 @@ impl Supervisor {
     }
 
     pub fn snapshot(&self, spec: &ServiceSpec) -> ServiceSnapshot {
-        let check = check_service_port(
-            &spec.id,
-            &spec.display_name,
-            &spec.bind_host,
-            spec.port,
-            &spec.pidfile,
-        );
-        let pid = match &check.owner {
+        // Ligero: sin netstat/tasklist (el panel llama esto cada pocos segundos).
+        let owner = crate::ports::classify_port_light(&spec.bind_host, spec.port, &spec.pidfile);
+        let pid = match &owner {
             PortOwner::Ours { pid, .. } => Some(*pid),
-            _ => read_pid(&spec.pidfile).filter(|p| crate::ports::process_alive(*p)),
+            _ => read_pid(&spec.pidfile).filter(|p| crate::ports::process_alive_fast(*p)),
         };
-        let (status, detail) = match &check.owner {
-            PortOwner::Ours { name, pid } => (
+        let (status, detail) = match &owner {
+            PortOwner::Ours { pid, .. } => (
                 ServiceStatus::Running,
-                format!("escucha {}:{} · {name} PID {pid}", spec.bind_host, spec.port),
+                format!("escucha {}:{} · PID {pid}", spec.bind_host, spec.port),
+            ),
+            PortOwner::Unknown => (
+                ServiceStatus::Stopped,
+                format!(
+                    "puerto {} ocupado (pulsa Revisar puertos para ver quién)",
+                    spec.port
+                ),
             ),
             PortOwner::Foreign { processes } => {
                 let who = processes
@@ -70,19 +72,9 @@ impl Supervisor {
                     .join(", ");
                 (
                     ServiceStatus::Stopped,
-                    format!(
-                        "puerto {} ocupado por {who} — {}",
-                        spec.port, check.hint
-                    ),
+                    format!("puerto {} ocupado por {who}", spec.port),
                 )
             }
-            PortOwner::Unknown => (
-                ServiceStatus::Crashed,
-                format!(
-                    "puerto {} responde pero no es un proceso de DevKit",
-                    spec.port
-                ),
-            ),
             PortOwner::Free => {
                 if pid.is_some() {
                     (
