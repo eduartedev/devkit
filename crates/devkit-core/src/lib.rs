@@ -27,4 +27,4 @@ pub use error::{Error, Result};
 pub use kit::DevKit;
 pub use model::*;
 pub use paths::{AppConfig, Paths};
-pub use ports::{PortCheck, PortOwner, PortProcess};
+pub use ports::{PortCheck, PortOwner, PortProcess, PortsSettings};

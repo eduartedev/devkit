@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::ports::{check_service_port, PortCheck};
 use crate::hosts;
 use crate::model::{
-    ServiceSnapshot, ServiceSpec, ServiceStatus, StackStatus, StopKind, LOCALHOST,
+    ServiceSnapshot, ServiceSpec, ServiceStatus, StackStatus, StopKind,
 };
 use crate::nginx;
 use crate::pack;
@@ -201,9 +201,27 @@ impl DevKit {
 
     pub fn start_dns_or_hosts(&mut self) -> Result<()> {
         if self.dns_stop.is_some() {
+            // Aun con DNS vivo, refrescar hosts: Windows no consulta 127.0.0.1:53
+            // a menos que el adaptador lo tenga configurado.
+            let sites = scan_sites(&self.paths, &self.config)?;
+            match hosts::apply_hosts(&sites) {
+                Ok(()) => {
+                    self.last_dns = format!(
+                        "DNS :53 + hosts (*.{})",
+                        self.config.tld
+                    );
+                }
+                Err(h) => {
+                    self.last_dns = format!(
+                        "DNS :53 activo; hosts falló ({h}). Abre el panel como admin o añade *.{} a hosts",
+                        self.config.tld
+                    );
+                }
+            }
             return Ok(());
         }
         let sites = scan_sites(&self.paths, &self.config)?;
+        let mut dns_ok = false;
         match dns::try_bind() {
             Ok(_sock) => {
                 drop(_sock);
@@ -220,28 +238,49 @@ impl DevKit {
                         if let Ok(child) = cmd.spawn() {
                             let _ = fs::write(&pidfile, child.id().to_string());
                             std::mem::forget(child);
-                            self.last_dns =
-                                format!("DNS local {LOCALHOST}:53 (*.{}) [detach]", self.config.tld);
-                            let _ = hosts::apply_hosts(&sites);
-                            return Ok(());
+                            dns_ok = true;
                         }
                     }
                 }
-                let stop = Arc::new(AtomicBool::new(false));
-                let handle = dns::spawn(stop.clone())?;
-                self.dns_stop = Some(stop);
-                self.dns_thread = Some(handle);
-                self.last_dns = format!("DNS local {LOCALHOST}:53 (*.{})", self.config.tld);
-            }
-            Err(e) => {
-                match hosts::apply_hosts(&sites) {
-                    Ok(()) => {
-                        self.last_dns = "archivo hosts actualizado (fallback)".into();
-                    }
-                    Err(h) => {
-                        self.last_dns = format!("{e} | {h}");
-                    }
+                if !dns_ok {
+                    let stop = Arc::new(AtomicBool::new(false));
+                    let handle = dns::spawn(stop.clone())?;
+                    self.dns_stop = Some(stop);
+                    self.dns_thread = Some(handle);
+                    dns_ok = true;
                 }
+            }
+            Err(_) => {
+                dns_ok = false;
+            }
+        }
+
+        // Hosts es la vía fiable en Windows (el DNS local solo sirve si el NIC apunta a 127.0.0.1).
+        match hosts::apply_hosts(&sites) {
+            Ok(()) => {
+                self.last_dns = if dns_ok {
+                    format!("hosts + DNS :53 (*.{})", self.config.tld)
+                } else {
+                    format!("archivo hosts (*.{})", self.config.tld)
+                };
+                #[cfg(windows)]
+                {
+                    let _ = Command::new("ipconfig")
+                        .args(["/flushdns"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            }
+            Err(h) => {
+                self.last_dns = if dns_ok {
+                    format!(
+                        "DNS :53 (*.{}); hosts sin permiso — ejecuta como admin ({h})",
+                        self.config.tld
+                    )
+                } else {
+                    format!("sin DNS ni hosts: {h}")
+                };
             }
         }
         Ok(())
@@ -574,6 +613,34 @@ impl DevKit {
 
     pub fn isolated_path(&self) -> String {
         terminal::isolated_path(&self.paths, &self.config)
+    }
+
+    pub fn ports_config(&self) -> crate::ports::PortsSettings {
+        crate::ports::PortsSettings::from_config(&self.config)
+    }
+
+    /// Fuerza reescritura del bloque DevKit en el archivo hosts.
+    pub fn ensure_hosts(&mut self) -> Result<String> {
+        let sites = scan_sites(&self.paths, &self.config)?;
+        hosts::apply_hosts(&sites)?;
+        self.last_dns = format!("archivo hosts (*.{})", self.config.tld);
+        Ok(format!(
+            "hosts actualizado: bloque DevKit con {} sitio(s). El resto del archivo (Laragon, etc.) se conservó.",
+            sites.len()
+        ))
+    }
+
+    /// Guarda puertos, regenera configs y reinicia el stack.
+    pub fn update_ports(&mut self, ports: crate::ports::PortsSettings) -> Result<StackStatus> {
+        ports.validate()?;
+        ports.apply_to(&mut self.config);
+        self.config.save(&self.paths.config_file())?;
+        crate::ports::clear_port_cache();
+        // Regenera nginx/php/redis/mysql con los nuevos puertos.
+        let _ = self.reload_sites();
+        let _ = self.ensure_hosts();
+        let _ = self.stop_all();
+        self.start_all(true)
     }
 
     pub fn adminer_url(&self) -> String {

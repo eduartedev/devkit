@@ -1,4 +1,6 @@
+use crate::error::{Error, Result};
 use crate::model::LOCALHOST;
+use crate::paths::AppConfig;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,6 +9,71 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+/// Puertos editables desde el panel (mirror de `AppConfig`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortsSettings {
+    pub http_port: u16,
+    pub https_port: u16,
+    pub php_port: u16,
+    pub mysql_port: u16,
+    pub redis_port: u16,
+    pub mailpit_smtp: u16,
+    pub mailpit_ui: u16,
+}
+
+impl PortsSettings {
+    pub fn from_config(cfg: &AppConfig) -> Self {
+        Self {
+            http_port: cfg.http_port,
+            https_port: cfg.https_port,
+            php_port: cfg.php_port,
+            mysql_port: cfg.mysql_port,
+            redis_port: cfg.redis_port,
+            mailpit_smtp: cfg.mailpit_smtp,
+            mailpit_ui: cfg.mailpit_ui,
+        }
+    }
+
+    pub fn apply_to(&self, cfg: &mut AppConfig) {
+        cfg.http_port = self.http_port;
+        cfg.https_port = self.https_port;
+        cfg.php_port = self.php_port;
+        cfg.mysql_port = self.mysql_port;
+        cfg.redis_port = self.redis_port;
+        cfg.mailpit_smtp = self.mailpit_smtp;
+        cfg.mailpit_ui = self.mailpit_ui;
+    }
+
+    /// Rechaza puerto 0 y valores duplicados entre servicios DevKit.
+    pub fn validate(&self) -> Result<()> {
+        let labeled = [
+            ("HTTP", self.http_port),
+            ("HTTPS", self.https_port),
+            ("PHP", self.php_port),
+            ("MariaDB", self.mysql_port),
+            ("Redis", self.redis_port),
+            ("Mailpit SMTP", self.mailpit_smtp),
+            ("Mailpit UI", self.mailpit_ui),
+        ];
+        for (name, port) in labeled {
+            if port == 0 {
+                return Err(Error::msg(format!(
+                    "puerto inválido para {name}: 0 (usa 1–65535)"
+                )));
+            }
+        }
+        let mut seen: HashMap<u16, &'static str> = HashMap::new();
+        for (name, port) in labeled {
+            if let Some(other) = seen.insert(port, name) {
+                return Err(Error::msg(format!(
+                    "puerto {port} duplicado entre {other} y {name}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortProcess {
@@ -167,6 +234,10 @@ pub fn cache_port_checks(checks: Vec<PortCheck>) {
         at: Instant::now(),
         checks,
     });
+}
+
+pub fn clear_port_cache() {
+    *port_cache().lock() = None;
 }
 
 pub fn cached_port_checks_fresh(max_age: Duration) -> Option<Vec<PortCheck>> {
@@ -594,5 +665,43 @@ mod tests {
         let alts = suggest_alternates(3306);
         assert!(alts.iter().all(|p| *p != 3306));
         assert!(alts.len() <= 3);
+    }
+
+    #[test]
+    fn ports_settings_rejects_zero() {
+        let mut p = PortsSettings::from_config(&AppConfig::default());
+        p.http_port = 0;
+        let err = p.validate().unwrap_err().to_string();
+        assert!(err.contains("HTTP"));
+        assert!(err.contains("0"));
+    }
+
+    #[test]
+    fn ports_settings_rejects_duplicates() {
+        let mut p = PortsSettings::from_config(&AppConfig::default());
+        p.redis_port = p.mysql_port;
+        let err = p.validate().unwrap_err().to_string();
+        assert!(err.contains("duplicado"));
+        assert!(err.contains(&p.mysql_port.to_string()));
+    }
+
+    #[test]
+    fn ports_settings_saves_into_config_toml() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut cfg = AppConfig::default();
+        cfg.save(&path).unwrap();
+
+        let mut ports = PortsSettings::from_config(&cfg);
+        ports.http_port = 8088;
+        ports.mysql_port = 3307;
+        ports.validate().unwrap();
+        ports.apply_to(&mut cfg);
+        cfg.save(&path).unwrap();
+
+        let loaded = AppConfig::load(&path).unwrap();
+        assert_eq!(loaded.http_port, 8088);
+        assert_eq!(loaded.mysql_port, 3307);
+        assert_eq!(loaded.php_port, 9000);
     }
 }
