@@ -1,7 +1,7 @@
 use crate::create;
 use crate::dns;
 use crate::error::{Error, Result};
-use crate::health::is_port_open;
+use crate::ports::{check_service_port, PortCheck};
 use crate::hosts;
 use crate::model::{
     ServiceSnapshot, ServiceSpec, ServiceStatus, StackStatus, StopKind, LOCALHOST,
@@ -182,7 +182,7 @@ impl DevKit {
         }
         let sites = scan_sites(&self.paths, &self.config)?;
         nginx::write_all(&self.paths, &self.config, &sites)?;
-        if is_port_open(&self.config.bind, self.config.http_port) {
+        if crate::health::is_port_open(&self.config.bind, self.config.http_port) {
             let spec = self.spec_nginx()?;
             let _ = Command::new(&spec.binary)
                 .args([
@@ -321,11 +321,32 @@ impl DevKit {
         Ok(())
     }
 
+    pub fn check_ports(&self) -> Result<Vec<PortCheck>> {
+        let mut checks = Vec::new();
+        for spec in self.specs()? {
+            checks.push(check_service_port(
+                &spec.id,
+                &spec.display_name,
+                &spec.bind_host,
+                spec.port,
+                &spec.pidfile,
+            ));
+        }
+        Ok(checks)
+    }
+
     pub fn start_all(&mut self, detach: bool) -> Result<StackStatus> {
         self.paths.ensure()?;
         self.reload_sites()?;
         self.start_dns_or_hosts()?;
         let mut warnings = Vec::new();
+
+        let port_checks = self.check_ports().unwrap_or_default();
+        for check in &port_checks {
+            if check.is_conflict() {
+                warnings.push(check.summary());
+            }
+        }
 
         if self.paths.mysqld().exists() {
             if let Err(e) = self.init_mariadb_if_needed() {
@@ -337,21 +358,30 @@ impl DevKit {
         let specs = self.specs()?;
         for id in order {
             if let Some(spec) = specs.iter().find(|s| s.id == id).cloned() {
+                // Skip spawn if already conflicted — avoid noisy double errors.
+                let blocked = port_checks
+                    .iter()
+                    .find(|c| c.service == id)
+                    .is_some_and(|c| c.is_conflict());
+                if blocked {
+                    continue;
+                }
                 match self.supervisor.start(spec, detach) {
                     Ok(snap) => {
                         if snap.status == ServiceStatus::Crashed {
                             warnings.push(format!("{}: {}", snap.display_name, snap.detail));
                         }
                     }
-                    Err(e) => warnings.push(format!("{id}: {e}")),
+                    Err(e) => warnings.push(e.to_string()),
                 }
             }
         }
-        if is_port_open(&self.config.bind, self.config.mysql_port) {
+        if crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
             let _ = self.set_mysql_password_if_needed();
         }
         let mut st = self.status()?;
         st.warnings.extend(warnings);
+        st.port_checks = self.check_ports().unwrap_or_default();
         Ok(st)
     }
 
@@ -410,13 +440,21 @@ impl DevKit {
             .map(|s| self.supervisor.snapshot(s))
             .collect();
         let sites = scan_sites(&self.paths, &self.config)?;
+        let port_checks = self.check_ports().unwrap_or_default();
+        let mut warnings = Vec::new();
+        for check in &port_checks {
+            if check.is_conflict() {
+                warnings.push(check.summary());
+            }
+        }
         Ok(StackStatus {
             root: self.paths.root.clone(),
             php_version: self.config.php_version.clone(),
             services,
             sites,
             dns: self.last_dns.clone(),
-            warnings: Vec::new(),
+            warnings,
+            port_checks,
         })
     }
 
@@ -428,7 +466,17 @@ impl DevKit {
                 cgi.display()
             )));
         }
-        let was_running = is_port_open(&self.config.bind, self.config.php_port);
+        let was_running = matches!(
+            check_service_port(
+                "php",
+                "PHP",
+                &self.config.bind,
+                self.config.php_port,
+                &self.paths.logs.join("php-cgi.pid"),
+            )
+            .owner,
+            crate::ports::PortOwner::Ours { .. }
+        );
         if was_running {
             let _ = self.stop_service("php");
         }

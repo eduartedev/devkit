@@ -99,4 +99,6 @@ pub struct StackStatus {
     pub sites: Vec<Site>,
     pub dns: String,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub port_checks: Vec<crate::ports::PortCheck>,
 }

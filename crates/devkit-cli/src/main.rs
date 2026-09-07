@@ -31,6 +31,8 @@ enum Commands {
         service: Option<String>,
     },
     Status,
+    /// Muestra qué proceso usa cada puerto del stack
+    Ports,
     Reload,
     /// Cambia o lista versiones de PHP
     Php {
@@ -113,6 +115,25 @@ fn run() -> devkit_core::Result<()> {
             }
         }
         Commands::Status => print_status(&kit.status()?),
+        Commands::Ports => {
+            let checks = kit.check_ports()?;
+            for c in &checks {
+                let mark = if c.is_conflict() {
+                    "CONFLICTO"
+                } else if matches!(c.owner, devkit_core::PortOwner::Ours { .. }) {
+                    "DEVKIT"
+                } else {
+                    "libre"
+                };
+                println!("  [{mark:9}] {}", c.summary());
+                if c.is_conflict() {
+                    println!("            → {}", c.hint);
+                }
+            }
+            if checks.iter().any(|c| c.is_conflict()) {
+                eprintln!("tip: apaga Laragon/XAMPP o cambia puertos en etc/devkit/config.toml");
+            }
+        }
         Commands::Reload => {
             let sites = kit.reload_sites()?;
             println!("{} sitios", sites.len());
@@ -166,6 +187,11 @@ fn print_status(st: &devkit_core::StackStatus) {
     }
     for site in &st.sites {
         println!("  site {} {}", site.hostname, site.url);
+    }
+    for c in &st.port_checks {
+        if c.is_conflict() {
+            eprintln!("puerto: {}", c.summary());
+        }
     }
     for w in &st.warnings {
         eprintln!("aviso: {w}");

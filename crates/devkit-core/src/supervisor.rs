@@ -2,6 +2,7 @@ use crate::bind::require_localhost;
 use crate::error::{Error, Result};
 use crate::health::{is_port_open, wait_until_closed, wait_until_open};
 use crate::model::{ServiceSnapshot, ServiceSpec, ServiceStatus, StopKind};
+use crate::ports::{check_service_port, PortOwner};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
@@ -45,14 +46,53 @@ impl Supervisor {
     }
 
     pub fn snapshot(&self, spec: &ServiceSpec) -> ServiceSnapshot {
-        let pid = read_pid(&spec.pidfile);
-        let open = is_port_open(&spec.bind_host, spec.port);
-        let status = if open {
-            ServiceStatus::Running
-        } else if pid.is_some() {
-            ServiceStatus::Crashed
-        } else {
-            ServiceStatus::Stopped
+        let check = check_service_port(
+            &spec.id,
+            &spec.display_name,
+            &spec.bind_host,
+            spec.port,
+            &spec.pidfile,
+        );
+        let pid = match &check.owner {
+            PortOwner::Ours { pid, .. } => Some(*pid),
+            _ => read_pid(&spec.pidfile).filter(|p| crate::ports::process_alive(*p)),
+        };
+        let (status, detail) = match &check.owner {
+            PortOwner::Ours { name, pid } => (
+                ServiceStatus::Running,
+                format!("escucha {}:{} · {name} PID {pid}", spec.bind_host, spec.port),
+            ),
+            PortOwner::Foreign { processes } => {
+                let who = processes
+                    .iter()
+                    .map(|p| p.describe())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    ServiceStatus::Stopped,
+                    format!(
+                        "puerto {} ocupado por {who} — {}",
+                        spec.port, check.hint
+                    ),
+                )
+            }
+            PortOwner::Unknown => (
+                ServiceStatus::Crashed,
+                format!(
+                    "puerto {} responde pero no es un proceso de DevKit",
+                    spec.port
+                ),
+            ),
+            PortOwner::Free => {
+                if pid.is_some() {
+                    (
+                        ServiceStatus::Crashed,
+                        "pidfile presente pero el puerto no responde".into(),
+                    )
+                } else {
+                    (ServiceStatus::Stopped, "detenido".into())
+                }
+            }
         };
         ServiceSnapshot {
             id: spec.id.clone(),
@@ -61,11 +101,7 @@ impl Supervisor {
             bind: spec.bind_host.clone(),
             port: spec.port,
             pid,
-            detail: if open {
-                format!("escucha {}:{}", spec.bind_host, spec.port)
-            } else {
-                "sin respuesta en el puerto".into()
-            },
+            detail,
         }
     }
 
@@ -77,19 +113,71 @@ impl Supervisor {
             });
         }
 
-        if is_port_open(&spec.bind_host, spec.port) {
-            if read_pid(&spec.pidfile).is_some() {
+        let check = check_service_port(
+            &spec.id,
+            &spec.display_name,
+            &spec.bind_host,
+            spec.port,
+            &spec.pidfile,
+        );
+        match &check.owner {
+            PortOwner::Ours { .. } => {
                 let snap = self.snapshot(&spec);
                 return Ok(ServiceSnapshot {
                     detail: "ya estaba en marcha".into(),
                     ..snap
                 });
             }
-            return Err(Error::PortOccupied {
-                service: spec.id.clone(),
-                port: spec.port,
-                hint: "otro proceso usa este puerto".into(),
-            });
+            PortOwner::Foreign { processes } => {
+                let who = if processes.is_empty() {
+                    "proceso desconocido".into()
+                } else {
+                    processes
+                        .iter()
+                        .map(|p| p.describe())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let alts = if check.suggested_ports.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; puertos libres sugeridos: {}",
+                        check
+                            .suggested_ports
+                            .iter()
+                            .map(|p| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                return Err(Error::PortOccupied {
+                    service: spec.display_name.clone(),
+                    port: spec.port,
+                    hint: format!("{who}. {}{alts}", check.hint),
+                });
+            }
+            PortOwner::Unknown => {
+                let alts = if check.suggested_ports.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; puertos libres sugeridos: {}",
+                        check
+                            .suggested_ports
+                            .iter()
+                            .map(|p| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                return Err(Error::PortOccupied {
+                    service: spec.display_name.clone(),
+                    port: spec.port,
+                    hint: format!("proceso no identificado. {}{alts}", check.hint),
+                });
+            }
+            PortOwner::Free => {}
         }
 
         let mut cmd = spec.command();

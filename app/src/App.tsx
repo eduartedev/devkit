@@ -23,6 +23,22 @@ type Site = {
   url: string;
 };
 
+type PortOwner =
+  | { kind: "free" }
+  | { kind: "ours"; pid: number; name: string }
+  | { kind: "foreign"; processes: { pid: number; name: string }[] }
+  | { kind: "unknown" };
+
+type PortCheck = {
+  service: string;
+  display_name: string;
+  bind: string;
+  port: number;
+  owner: PortOwner;
+  hint: string;
+  suggested_ports: number[];
+};
+
 type Stack = {
   root: string;
   php_version: string;
@@ -30,7 +46,21 @@ type Stack = {
   sites: Site[];
   dns: string;
   warnings: string[];
+  port_checks?: PortCheck[];
 };
+
+function portBadge(owner: PortOwner): { label: string; cls: string } {
+  switch (owner.kind) {
+    case "free":
+      return { label: "libre", cls: "port-free" };
+    case "ours":
+      return { label: "DevKit", cls: "port-ours" };
+    case "foreign":
+      return { label: "ocupado", cls: "port-busy" };
+    case "unknown":
+      return { label: "?", cls: "port-busy" };
+  }
+}
 
 export default function App() {
   const [stack, setStack] = useState<Stack | null>(null);
@@ -189,6 +219,37 @@ export default function App() {
             <button type="submit">Crear</button>
           </form>
         </section>
+        <section className="panel">
+          <h2>Puertos</h2>
+          <ul className="ports">
+            {(stack?.port_checks ?? []).map((p) => {
+              const badge = portBadge(p.owner);
+              const who =
+                p.owner.kind === "foreign"
+                  ? p.owner.processes.map((x) => `${x.name}#${x.pid}`).join(", ")
+                  : p.owner.kind === "ours"
+                    ? `${p.owner.name}#${p.owner.pid}`
+                    : p.hint;
+              return (
+                <li key={p.service}>
+                  <span className={`port-badge ${badge.cls}`}>{badge.label}</span>
+                  <div>
+                    <b>
+                      {p.display_name} :{p.port}
+                    </b>
+                    <small>{who}</small>
+                    {p.owner.kind === "foreign" && p.suggested_ports.length > 0 && (
+                      <small>alternativas: {p.suggested_ports.join(", ")}</small>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+            {!stack?.port_checks?.length && (
+              <li className="empty">Sin datos de puertos aún</li>
+            )}
+          </ul>
+        </section>
       </main>
 
       <section className="tools">
@@ -216,6 +277,9 @@ export default function App() {
           }
         >
           Abrir :8080
+        </button>
+        <button onClick={() => run("ports", () => invoke("check_ports"))}>
+          Revisar puertos
         </button>
         <button onClick={() => run("ssl", () => invoke("enable_ssl"))}>SSL mkcert</button>
         <button onClick={() => run("pack", () => invoke("pack_portable"))}>Zip portable</button>

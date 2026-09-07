@@ -1,5 +1,7 @@
 /target/
 /devkit.exe
+/devkit-new.exe
+/*.exe
 **/*.pdb
 /app/node_modules/
 /app/dist/

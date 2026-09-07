@@ -27,7 +27,7 @@ cargo run -p devkit-cli -- stop
 Tras el build: `C:\DevKit\target\release\devkit.exe`
 
 - `devkit setup [--full] [--php 8.4]`
-- `devkit start` / `stop` / `status` / `reload`
+- `devkit start` / `stop` / `status` / `ports` / `reload`
 - `devkit php list` / `devkit php use 8.4`
 - `devkit create laravel tienda`
 - `devkit create wordpress blog`

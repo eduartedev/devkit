@@ -18,6 +18,11 @@ fn get_status(state: State<KitState>) -> Result<StackStatus, String> {
 }
 
 #[tauri::command]
+fn check_ports(state: State<KitState>) -> Result<StackStatus, String> {
+    state.0.lock().status().map_err(map_err)
+}
+
+#[tauri::command]
 fn start_all(state: State<KitState>) -> Result<StackStatus, String> {
     state.0.lock().start_all(true).map_err(map_err)
 }
@@ -148,6 +153,7 @@ pub fn run() {
         .manage(KitState(Mutex::new(ui_kit)))
         .invoke_handler(tauri::generate_handler![
             get_status,
+            check_ports,
             start_all,
             stop_all,
             start_service,

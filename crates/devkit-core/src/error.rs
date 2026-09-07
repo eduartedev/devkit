@@ -43,7 +43,7 @@ impl fmt::Display for Error {
                 write!(f, "proceso {name} terminó ({status:?})")
             }
             Error::PortOccupied { service, port, hint } => {
-                write!(f, "puerto {port} ocupado para {service}: {hint}")
+                write!(f, "{service} no arrancó: puerto {port} ocupado — {hint}")
             }
             Error::BindForbidden { got } => {
                 write!(f, "bind prohibido (solo 127.0.0.1): {got}")
