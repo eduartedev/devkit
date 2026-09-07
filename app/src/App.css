@@ -118,7 +118,65 @@ button:disabled { opacity: 0.5; cursor: wait; }
   white-space: pre-wrap;
 }
 
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.panel-head h2 { margin: 0; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 8, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 40;
+}
+.modal {
+  width: min(480px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 20px;
+  box-shadow: 0 18px 48px #00000088;
+}
+.modal-hint {
+  margin: 0 0 16px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.port-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.port-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.port-form input { width: 100%; }
+.modal-error {
+  margin: 12px 0 0;
+  color: var(--red);
+  font-size: 12px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
 @media (max-width: 900px) {
-  .grid, .strip, .create { grid-template-columns: 1fr; }
+  .grid, .strip, .create, .port-form { grid-template-columns: 1fr; }
   .mast { flex-direction: column; align-items: start; }
 }

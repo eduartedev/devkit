@@ -1,4 +1,4 @@
-use devkit_core::{watch, DevKit, StackStatus};
+use devkit_core::{watch, DevKit, PortsSettings, StackStatus};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -155,6 +155,24 @@ async fn pack_portable(state: State<'_, KitState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn get_ports_config(state: State<'_, KitState>) -> Result<PortsSettings, String> {
+    with_kit(&state, |kit| Ok(kit.ports_config())).await
+}
+
+#[tauri::command]
+async fn update_ports(
+    state: State<'_, KitState>,
+    ports: PortsSettings,
+) -> Result<StackStatus, String> {
+    with_kit(&state, move |kit| kit.update_ports(ports).map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn ensure_hosts(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| kit.ensure_hosts().map_err(map_err)).await
+}
+
+#[tauri::command]
 fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
@@ -187,6 +205,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             check_ports,
+            get_ports_config,
+            update_ports,
+            ensure_hosts,
             start_all,
             stop_all,
             start_service,

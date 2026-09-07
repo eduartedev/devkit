@@ -39,6 +39,16 @@ type PortCheck = {
   suggested_ports: number[];
 };
 
+type PortsSettings = {
+  http_port: number;
+  https_port: number;
+  php_port: number;
+  mysql_port: number;
+  redis_port: number;
+  mailpit_smtp: number;
+  mailpit_ui: number;
+};
+
 type Stack = {
   root: string;
   php_version: string;
@@ -48,6 +58,16 @@ type Stack = {
   warnings: string[];
   port_checks?: PortCheck[];
 };
+
+const PORT_FIELDS: { key: keyof PortsSettings; label: string }[] = [
+  { key: "http_port", label: "HTTP (Nginx)" },
+  { key: "https_port", label: "HTTPS" },
+  { key: "php_port", label: "PHP-FPM" },
+  { key: "mysql_port", label: "MariaDB" },
+  { key: "redis_port", label: "Redis" },
+  { key: "mailpit_ui", label: "Mailpit UI" },
+  { key: "mailpit_smtp", label: "Mailpit SMTP" },
+];
 
 function portBadge(owner: PortOwner): { label: string; cls: string } {
   switch (owner.kind) {
@@ -69,6 +89,9 @@ export default function App() {
   const [kind, setKind] = useState("blank");
   const [name, setName] = useState("");
   const [php, setPhp] = useState<string[]>([]);
+  const [portsOpen, setPortsOpen] = useState(false);
+  const [portsDraft, setPortsDraft] = useState<PortsSettings | null>(null);
+  const [portsError, setPortsError] = useState("");
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -98,6 +121,9 @@ export default function App() {
       const out = await fn();
       if (Array.isArray(out)) setLog(out.join("\n"));
       else if (typeof out === "string") setLog(out);
+      else if (out && typeof out === "object" && "services" in (out as object)) {
+        setStack(out as Stack);
+      }
       await refresh();
     } catch (e) {
       setLog(String(e));
@@ -106,7 +132,37 @@ export default function App() {
     }
   }
 
+  async function openPortsModal() {
+    setPortsError("");
+    try {
+      const cfg = await invoke<PortsSettings>("get_ports_config");
+      setPortsDraft(cfg);
+      setPortsOpen(true);
+    } catch (e) {
+      setLog(String(e));
+    }
+  }
+
+  async function savePorts() {
+    if (!portsDraft) return;
+    setPortsError("");
+    setBusy("ports-save");
+    setLog("");
+    try {
+      const st = await invoke<Stack>("update_ports", { ports: portsDraft });
+      setStack(st);
+      setPortsOpen(false);
+      setLog("Puertos guardados y servicios reiniciados.");
+      await refresh();
+    } catch (e) {
+      setPortsError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const running = stack?.services.some((s) => s.status === "running") ?? false;
+  const httpPort = stack?.services.find((s) => s.id === "nginx")?.port ?? 8080;
 
   return (
     <div className="deck">
@@ -139,7 +195,7 @@ export default function App() {
       <section className="strip">
         <div>
           <span>HTTP</span>
-          <strong>:{stack?.services.find((s) => s.id === "nginx")?.port ?? 8080}</strong>
+          <strong>:{httpPort}</strong>
         </div>
         <div>
           <span>PHP</span>
@@ -225,7 +281,12 @@ export default function App() {
           </form>
         </section>
         <section className="panel">
-          <h2>Puertos</h2>
+          <div className="panel-head">
+            <h2>Puertos</h2>
+            <button type="button" disabled={!!busy} onClick={openPortsModal}>
+              Editar
+            </button>
+          </div>
           <ul className="ports">
             {(stack?.port_checks ?? []).map((p) => {
               const badge = portBadge(p.owner);
@@ -281,10 +342,21 @@ export default function App() {
             })
           }
         >
-          Abrir :8080
+          Abrir :{httpPort}
         </button>
         <button onClick={() => run("ports", () => invoke("check_ports"))}>
           Revisar puertos
+        </button>
+        <button type="button" disabled={!!busy} onClick={openPortsModal}>
+          Editar puertos
+        </button>
+        <button
+          type="button"
+          disabled={!!busy}
+          title="Solo actualiza el bloque # BEGIN DEVKIT. Puede pedir UAC."
+          onClick={() => run("hosts", () => invoke("ensure_hosts"))}
+        >
+          Actualizar hosts
         </button>
         <button onClick={() => run("ssl", () => invoke("enable_ssl"))}>SSL mkcert</button>
         <button onClick={() => run("pack", () => invoke("pack_portable"))}>Zip portable</button>
@@ -311,6 +383,67 @@ export default function App() {
           {stack?.warnings?.join("\n")}
           {log}
         </pre>
+      )}
+
+      {portsOpen && portsDraft && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setPortsOpen(false)}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ports-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="ports-modal-title">Editar puertos</h2>
+            <p className="modal-hint">
+              Al guardar se actualiza config.toml, se regeneran configs y se reinician los
+              servicios.
+            </p>
+            <div className="port-form">
+              {PORT_FIELDS.map(({ key, label }) => (
+                <label key={key}>
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={portsDraft[key]}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      setPortsDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              [key]: Number.isFinite(n) ? Math.min(65535, Math.max(0, n)) : 0,
+                            }
+                          : prev,
+                      );
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            {portsError && <p className="modal-error">{portsError}</p>}
+            <div className="modal-actions">
+              <button type="button" disabled={!!busy} onClick={() => setPortsOpen(false)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="go"
+                disabled={!!busy}
+                onClick={savePorts}
+              >
+                Guardar y reiniciar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
