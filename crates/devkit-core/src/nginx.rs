@@ -20,7 +20,7 @@ pub fn render_main(paths: &Paths, cfg: &AppConfig, sites: &[Site]) -> Result<Str
             r#"
     server {{
         listen {bind}:{https} ssl;
-        server_name localhost 127.0.0.1;
+        server_name localhost 127.0.0.1 default.{tld};
         ssl_certificate {cert};
         ssl_certificate_key {key};
         root {www_default};
@@ -30,8 +30,11 @@ pub fn render_main(paths: &Paths, cfg: &AppConfig, sites: &[Site]) -> Result<Str
 "#,
             bind = cfg.bind,
             https = cfg.https_port,
+            tld = cfg.tld,
             cert = paths.posix(&paths.ssl_cert()),
             key = paths.posix(&paths.ssl_key()),
+            www_default = www_default,
+            sites_dir = sites_dir,
             php_loc = php_location(&php),
         )
     } else {
@@ -62,7 +65,7 @@ http {{
 
     server {{
         listen {bind}:{http} default_server;
-        server_name localhost 127.0.0.1;
+        server_name localhost 127.0.0.1 default.{tld};
         root {www_default};
         index index.php index.html;
         location / {{
@@ -76,6 +79,7 @@ http {{
 "#,
         bind = cfg.bind,
         http = cfg.http_port,
+        tld = cfg.tld,
         php_loc = php_location(&php),
         ssl_block = ssl_block,
     );
