@@ -1,4 +1,4 @@
-use devkit_core::{watch, DbCredentials, DevKit, PortsSettings, StackStatus};
+use devkit_core::{watch, DbCredentials, DevKit, PhpExtensionInfo, PortsSettings, StackStatus};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -199,6 +199,22 @@ async fn open_site_vhost(state: State<'_, KitState>, name: String) -> Result<Str
 }
 
 #[tauri::command]
+async fn list_php_extensions(state: State<'_, KitState>) -> Result<Vec<PhpExtensionInfo>, String> {
+    with_kit(&state, |kit| kit.list_php_extensions().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn set_php_extensions(
+    state: State<'_, KitState>,
+    extensions: Vec<String>,
+) -> Result<String, String> {
+    with_kit(&state, move |kit| {
+        kit.set_php_extensions(extensions).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
 fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
@@ -238,6 +254,8 @@ pub fn run() {
             update_db_credentials,
             regenerate_vhosts,
             open_site_vhost,
+            list_php_extensions,
+            set_php_extensions,
             start_all,
             stop_all,
             start_service,

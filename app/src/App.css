@@ -211,6 +211,31 @@ button.mini {
   font-size: 10px;
   text-transform: uppercase;
 }
+.modal-wide { width: min(560px, 100%); }
+.ext-filter { width: 100%; margin-bottom: 10px; }
+.ext-list {
+  max-height: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  padding: 8px;
+  background: #0c0e10;
+}
+.ext-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px dashed #2c333c;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+.ext-item small { display: block; color: var(--dim); font-size: 11px; }
 
 @media (max-width: 900px) {
   .grid, .strip, .create, .port-form { grid-template-columns: 1fr; }

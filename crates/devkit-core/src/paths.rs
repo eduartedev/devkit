@@ -217,6 +217,29 @@ pub struct AppConfig {
     pub php_version: String,
     pub ssl: bool,
     pub tld: String,
+    /// Extensiones PHP activas (nombres sin `php_` / `.dll`). Vacío = defaults.
+    #[serde(default = "default_php_extensions")]
+    pub php_extensions: Vec<String>,
+}
+
+fn default_php_extensions() -> Vec<String> {
+    [
+        "mysqli",
+        "pdo_mysql",
+        "pdo_sqlite",
+        "sqlite3",
+        "openssl",
+        "mbstring",
+        "curl",
+        "fileinfo",
+        "zip",
+        "gd",
+        "intl",
+        "exif",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 impl Default for AppConfig {
@@ -233,6 +256,7 @@ impl Default for AppConfig {
             php_version: "8.3".to_string(),
             ssl: false,
             tld: "test".to_string(),
+            php_extensions: default_php_extensions(),
         }
     }
 }

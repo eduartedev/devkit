@@ -810,6 +810,34 @@ impl DevKit {
         Ok(path.display().to_string())
     }
 
+    pub fn list_php_extensions(&self) -> Result<Vec<crate::php::PhpExtensionInfo>> {
+        let dir = self.paths.php_dir(&self.config.php_version);
+        crate::php::list_php_extensions(&dir, &self.config)
+    }
+
+    pub fn set_php_extensions(&mut self, names: Vec<String>) -> Result<String> {
+        let dir = self.paths.php_dir(&self.config.php_version);
+        let validated = crate::php::validate_extension_names(&names, &dir)?;
+        self.config.php_extensions = validated.clone();
+        self.config.save(&self.paths.config_file())?;
+        crate::php::write_php_ini(&dir, &self.config)?;
+        // Reinicia PHP si estaba en marcha para cargar extensiones.
+        let was = matches!(
+            self.supervisor.snapshot(&self.spec_php()?).status,
+            ServiceStatus::Running
+        );
+        if was {
+            let _ = self.stop_service("php");
+            let _ = self.start_service("php", true);
+        }
+        Ok(format!(
+            "PHP {}: {} extensión(es) activas{}",
+            self.config.php_version,
+            validated.len(),
+            if was { " (PHP reiniciado)" } else { "" }
+        ))
+    }
+
     pub fn enable_ssl(&mut self) -> Result<String> {
         let sites = scan_sites(&self.paths, &self.config)?;
         let msg = ssl::issue_certs(&self.paths, &mut self.config, &sites)?;

@@ -54,6 +54,12 @@ type DbCredentials = {
   password: string;
 };
 
+type PhpExtensionInfo = {
+  name: string;
+  dll: string;
+  enabled: boolean;
+};
+
 type Stack = {
   root: string;
   php_version: string;
@@ -101,6 +107,10 @@ export default function App() {
   const [dbDraft, setDbDraft] = useState<DbCredentials | null>(null);
   const [dbError, setDbError] = useState("");
   const [showDbPassword, setShowDbPassword] = useState(false);
+  const [extOpen, setExtOpen] = useState(false);
+  const [extList, setExtList] = useState<PhpExtensionInfo[]>([]);
+  const [extError, setExtError] = useState("");
+  const [extFilter, setExtFilter] = useState("");
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -194,6 +204,35 @@ export default function App() {
       await refresh();
     } catch (e) {
       setDbError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openExtModal() {
+    setExtError("");
+    setExtFilter("");
+    try {
+      const list = await invoke<PhpExtensionInfo[]>("list_php_extensions");
+      setExtList(list);
+      setExtOpen(true);
+    } catch (e) {
+      setLog(String(e));
+    }
+  }
+
+  async function saveExt() {
+    setExtError("");
+    setBusy("php-ext");
+    setLog("");
+    try {
+      const extensions = extList.filter((e) => e.enabled).map((e) => e.name);
+      const msg = await invoke<string>("set_php_extensions", { extensions });
+      setExtOpen(false);
+      setLog(msg);
+      await refresh();
+    } catch (e) {
+      setExtError(String(e));
     } finally {
       setBusy(null);
     }
@@ -397,6 +436,9 @@ export default function App() {
         <button type="button" disabled={!!busy} onClick={openDbModal}>
           Base de datos
         </button>
+        <button type="button" disabled={!!busy} onClick={openExtModal}>
+          Extensiones PHP
+        </button>
         <button
           onClick={() =>
             run("web", async () => {
@@ -590,6 +632,76 @@ export default function App() {
               </div>
             </div>
             {dbError && <p className="modal-error">{dbError}</p>}
+          </div>
+        </div>
+      )}
+
+      {extOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setExtOpen(false)}
+        >
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ext-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="ext-modal-title">Extensiones PHP</h2>
+            <p className="modal-hint">
+              Lista de <code>ext/*.dll</code>. Si un DLL no está en php.ini, PHP no lo carga; al
+              activarlo aquí se escribe <code>extension=…</code> y se reinicia PHP-FPM.
+            </p>
+            <input
+              className="ext-filter"
+              placeholder="filtrar…"
+              value={extFilter}
+              onChange={(e) => setExtFilter(e.target.value)}
+              disabled={!!busy}
+            />
+            <div className="ext-list">
+              {extList
+                .filter(
+                  (e) =>
+                    !extFilter.trim() ||
+                    e.name.includes(extFilter.trim().toLowerCase()) ||
+                    e.dll.toLowerCase().includes(extFilter.trim().toLowerCase()),
+                )
+                .map((e) => (
+                  <label key={e.name} className="ext-item">
+                    <input
+                      type="checkbox"
+                      checked={e.enabled}
+                      disabled={!!busy}
+                      onChange={() =>
+                        setExtList((prev) =>
+                          prev.map((x) =>
+                            x.name === e.name ? { ...x, enabled: !x.enabled } : x,
+                          ),
+                        )
+                      }
+                    />
+                    <span>
+                      <b>{e.name}</b>
+                      <small>{e.dll}</small>
+                    </span>
+                  </label>
+                ))}
+              {!extList.length && (
+                <p className="empty">No hay DLL en ext/ (¿PHP instalado?)</p>
+              )}
+            </div>
+            {extError && <p className="modal-error">{extError}</p>}
+            <div className="modal-actions">
+              <button type="button" disabled={!!busy} onClick={() => setExtOpen(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="go" disabled={!!busy} onClick={saveExt}>
+                Guardar y reiniciar PHP
+              </button>
+            </div>
           </div>
         </div>
       )}
