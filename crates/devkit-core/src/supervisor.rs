@@ -280,20 +280,23 @@ impl Supervisor {
         Ok(self.snapshot(spec))
     }
 
-    pub fn stop_mysql_admin(&self, spec: &ServiceSpec, mysqladmin: &PathBuf, password: &str) -> Result<ServiceSnapshot> {
+    pub fn stop_mysql_admin(
+        &self,
+        spec: &ServiceSpec,
+        mysqladmin: &PathBuf,
+        user: &str,
+        password: &str,
+    ) -> Result<ServiceSnapshot> {
         if mysqladmin.exists() {
-            let _ = Command::new(mysqladmin)
-                .args([
-                    "-u",
-                    "root",
-                    &format!("-p{password}"),
-                    "-h",
-                    "127.0.0.1",
-                    "-P",
-                    &spec.port.to_string(),
-                    "shutdown",
-                ])
-                .status();
+            let mut args = crate::secrets::mysql_cli_auth_args(user, password);
+            args.extend([
+                "-h".into(),
+                "127.0.0.1".into(),
+                "-P".into(),
+                spec.port.to_string(),
+                "shutdown".into(),
+            ]);
+            let _ = Command::new(mysqladmin).args(&args).status();
         }
         self.stop(spec)
     }

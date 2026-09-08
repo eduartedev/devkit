@@ -5,7 +5,7 @@ use crate::download::{
 use crate::error::{Error, Result};
 use crate::paths::{AppConfig, Paths};
 use crate::php::{write_default_index, write_mysql_ini, write_php_ini, write_redis_conf};
-use crate::secrets::{mysql_password, redis_password};
+use crate::secrets::redis_password;
 use std::fs;
 use std::io::Write;
 
@@ -52,11 +52,10 @@ pub fn run_setup(paths: &Paths, cfg: &AppConfig, full: bool, php_major: Option<&
         report.push("setup básico listo (usa --full para Redis, Mailpit, mkcert y Node)");
     }
 
-    let _ = mysql_password(paths)?;
-    report.push(format!(
-        "password root MariaDB en {}",
-        paths.mysql_password_file().display()
-    ));
+    let _ = crate::secrets::mysql_credentials(paths)?;
+    report.push(
+        "MariaDB: usuario root sin contraseña por defecto (editable en el panel / secrets)",
+    );
     Ok(report)
 }
 

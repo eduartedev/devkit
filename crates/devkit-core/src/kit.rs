@@ -10,7 +10,7 @@ use crate::nginx;
 use crate::pack;
 use crate::paths::{AppConfig, Paths};
 use crate::php::{write_mysql_ini, write_php_ini, write_redis_conf};
-use crate::secrets::{mysql_password, redis_password};
+use crate::secrets::{mysql_credentials, redis_password, DbCredentials};
 use crate::setup::{list_php_versions, log_setup, run_setup};
 use crate::site::scan_sites;
 use crate::ssl;
@@ -340,24 +340,185 @@ impl DevKit {
     }
 
     fn set_mysql_password_if_needed(&self) -> Result<()> {
-        let password = mysql_password(&self.paths)?;
+        // Alinea el servidor con los secretos: vacío = sin password (default).
+        let creds = mysql_credentials(&self.paths)?;
+        self.apply_mysql_credentials(&creds, None)
+    }
+
+    /// Intenta autenticar y, si hace falta, cambiar la contraseña desde `previous`.
+    fn apply_mysql_credentials(
+        &self,
+        desired: &DbCredentials,
+        previous: Option<&DbCredentials>,
+    ) -> Result<()> {
         let admin = self.paths.mysqladmin();
         if !admin.exists() {
             return Ok(());
         }
-        let _ = Command::new(&admin)
-            .args([
-                "-u",
-                "root",
-                "-h",
-                "127.0.0.1",
-                "-P",
-                &self.config.mysql_port.to_string(),
-                "password",
-                &password,
-            ])
-            .status();
+        if !crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
+            return Ok(());
+        }
+
+        let port = self.config.mysql_port.to_string();
+        let ping_ok = |user: &str, password: &str| -> bool {
+            let mut args = crate::secrets::mysql_cli_auth_args(user, password);
+            args.extend([
+                "-h".into(),
+                "127.0.0.1".into(),
+                "-P".into(),
+                port.clone(),
+                "ping".into(),
+            ]);
+            Command::new(&admin)
+                .args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+
+        if ping_ok(&desired.user, &desired.password) {
+            return Ok(());
+        }
+
+        // Candidatos para admin actual: previous → root vacío → desired user vacío → previous user vacío.
+        let mut attempts: Vec<(String, String)> = Vec::new();
+        if let Some(prev) = previous {
+            attempts.push((prev.user.clone(), prev.password.clone()));
+            if !prev.password.is_empty() {
+                attempts.push((prev.user.clone(), String::new()));
+            }
+        }
+        attempts.push(("root".into(), String::new()));
+        attempts.push((desired.user.clone(), String::new()));
+
+        let mut authed: Option<(String, String)> = None;
+        for (u, p) in attempts {
+            if ping_ok(&u, &p) {
+                authed = Some((u, p));
+                break;
+            }
+        }
+        let Some((admin_user, admin_pass)) = authed else {
+            return Err(Error::msg(
+                "no se pudo conectar a MariaDB para aplicar credenciales (¿está arrancada?)",
+            ));
+        };
+
+        // Si el usuario deseado no es el de admin, créalo/actualízalo vía mysql client.
+        if desired.user != admin_user {
+            self.ensure_mysql_user(&admin_user, &admin_pass, desired)?;
+        }
+
+        let mut args = crate::secrets::mysql_cli_auth_args(&admin_user, &admin_pass);
+        args.extend([
+            "-h".into(),
+            "127.0.0.1".into(),
+            "-P".into(),
+            port.clone(),
+            "password".into(),
+            desired.password.clone(),
+        ]);
+        // mysqladmin password aplica al usuario de -u; si desired != admin_user ya lo manejamos arriba.
+        if desired.user == admin_user {
+            let status = Command::new(&admin)
+                .args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()?;
+            if !status.success() {
+                return Err(Error::msg(
+                    "mysqladmin no pudo cambiar la contraseña de MariaDB",
+                ));
+            }
+        }
+
+        if !ping_ok(&desired.user, &desired.password) {
+            return Err(Error::msg(
+                "credenciales guardadas pero MariaDB no acepta el nuevo login",
+            ));
+        }
         Ok(())
+    }
+
+    fn ensure_mysql_user(
+        &self,
+        admin_user: &str,
+        admin_pass: &str,
+        desired: &DbCredentials,
+    ) -> Result<()> {
+        let mysql = self.paths.bin.join("mariadb").join("bin").join("mysql.exe");
+        let mysql = if mysql.exists() {
+            mysql
+        } else {
+            self.paths.bin.join("mariadb").join("bin").join("mysql")
+        };
+        if !mysql.exists() {
+            return Err(Error::msg(
+                "no está mysql.exe para crear el usuario; deja el usuario en root o instala MariaDB",
+            ));
+        }
+        let pwd_sql = desired.password.replace('\'', "''");
+        let user = &desired.user;
+        let sql = format!(
+            "CREATE USER IF NOT EXISTS '{user}'@'127.0.0.1' IDENTIFIED BY '{pwd_sql}';\
+             CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{pwd_sql}';\
+             GRANT ALL PRIVILEGES ON *.* TO '{user}'@'127.0.0.1' WITH GRANT OPTION;\
+             GRANT ALL PRIVILEGES ON *.* TO '{user}'@'localhost' WITH GRANT OPTION;\
+             FLUSH PRIVILEGES;"
+        );
+        let mut args = crate::secrets::mysql_cli_auth_args(admin_user, admin_pass);
+        args.extend([
+            "-h".into(),
+            "127.0.0.1".into(),
+            "-P".into(),
+            self.config.mysql_port.to_string(),
+            "-e".into(),
+            sql,
+        ]);
+        let status = Command::new(&mysql)
+            .args(&args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if !status.success() {
+            return Err(Error::msg(format!(
+                "no se pudo crear/actualizar el usuario MariaDB '{user}'"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn db_credentials(&self) -> Result<DbCredentials> {
+        mysql_credentials(&self.paths)
+    }
+
+    /// Guarda secretos, actualiza my.cnf y aplica en MariaDB si está en marcha.
+    pub fn update_db_credentials(&mut self, creds: DbCredentials) -> Result<String> {
+        let previous = mysql_credentials(&self.paths).ok();
+        let creds = creds.normalized();
+        creds.validate()?;
+        crate::secrets::write_mysql_credentials(&self.paths, &creds)?;
+        write_mysql_ini(&self.paths, &self.config)?;
+        match self.apply_mysql_credentials(&creds, previous.as_ref()) {
+            Ok(()) => {
+                if creds.password.is_empty() {
+                    Ok(format!(
+                        "credenciales OK: usuario `{}` sin contraseña (local)",
+                        creds.user
+                    ))
+                } else {
+                    Ok(format!(
+                        "credenciales OK: usuario `{}` con contraseña",
+                        creds.user
+                    ))
+                }
+            }
+            Err(e) => Ok(format!(
+                "secretos y my.cnf guardados; aplicar en servidor: {e}. Arranca MariaDB y vuelve a guardar."
+            )),
+        }
     }
 
     pub fn check_ports(&self) -> Result<Vec<PortCheck>> {
@@ -499,10 +660,16 @@ impl DevKit {
         let specs = self.specs().unwrap_or_default();
         for spec in specs.iter().rev() {
             if spec.id == "mariadb" {
-                let pw = mysql_password(&self.paths).unwrap_or_default();
-                let _ = self
-                    .supervisor
-                    .stop_mysql_admin(spec, &self.paths.mysqladmin(), &pw);
+                let creds = mysql_credentials(&self.paths).unwrap_or(DbCredentials {
+                    user: "root".into(),
+                    password: String::new(),
+                });
+                let _ = self.supervisor.stop_mysql_admin(
+                    spec,
+                    &self.paths.mysqladmin(),
+                    &creds.user,
+                    &creds.password,
+                );
             } else {
                 let _ = self.supervisor.stop(spec);
             }
@@ -535,10 +702,16 @@ impl DevKit {
             .find(|s| s.id == id)
             .ok_or_else(|| Error::msg(format!("servicio desconocido: {id}")))?;
         if spec.id == "mariadb" {
-            let pw = mysql_password(&self.paths).unwrap_or_default();
-            return self
-                .supervisor
-                .stop_mysql_admin(&spec, &self.paths.mysqladmin(), &pw);
+            let creds = mysql_credentials(&self.paths).unwrap_or(DbCredentials {
+                user: "root".into(),
+                password: String::new(),
+            });
+            return self.supervisor.stop_mysql_admin(
+                &spec,
+                &self.paths.mysqladmin(),
+                &creds.user,
+                &creds.password,
+            );
         }
         self.supervisor.stop(&spec)
     }

@@ -1,4 +1,4 @@
-use devkit_core::{watch, DevKit, PortsSettings, StackStatus};
+use devkit_core::{watch, DbCredentials, DevKit, PortsSettings, StackStatus};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -173,6 +173,22 @@ async fn ensure_hosts(state: State<'_, KitState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn get_db_credentials(state: State<'_, KitState>) -> Result<DbCredentials, String> {
+    with_kit(&state, |kit| kit.db_credentials().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn update_db_credentials(
+    state: State<'_, KitState>,
+    creds: DbCredentials,
+) -> Result<String, String> {
+    with_kit(&state, move |kit| {
+        kit.update_db_credentials(creds).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
 fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
@@ -208,6 +224,8 @@ pub fn run() {
             get_ports_config,
             update_ports,
             ensure_hosts,
+            get_db_credentials,
+            update_db_credentials,
             start_all,
             stop_all,
             start_service,

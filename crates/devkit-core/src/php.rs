@@ -57,6 +57,13 @@ extension=exif
 pub fn write_mysql_ini(paths: &Paths, cfg: &AppConfig) -> Result<()> {
     let datadir = paths.posix(&paths.data.join("mysql"));
     let basedir = paths.posix(&paths.bin.join("mariadb"));
+    let creds = crate::secrets::mysql_credentials(paths)?;
+    let password_line = if creds.password.is_empty() {
+        String::new()
+    } else {
+        // Local-only client defaults; archivo gitignored.
+        format!("password={}\n", creds.password)
+    };
     let body = format!(
         r#"[mysqld]
 basedir={basedir}
@@ -72,10 +79,12 @@ max_allowed_packet=64M
 [client]
 host={bind}
 port={port}
-user=root
-"#,
+user={user}
+{password_line}"#,
         bind = cfg.bind,
         port = cfg.mysql_port,
+        user = creds.user,
+        password_line = password_line,
     );
     crate::bind::assert_config_localhost_only(&body)?;
     fs::write(paths.mysql_cnf(), body)?;

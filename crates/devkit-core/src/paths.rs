@@ -183,6 +183,10 @@ impl Paths {
         self.secrets_dir().join("mysql-root.txt")
     }
 
+    pub fn mysql_user_file(&self) -> PathBuf {
+        self.secrets_dir().join("mysql-user.txt")
+    }
+
     pub fn redis_password_file(&self) -> PathBuf {
         self.secrets_dir().join("redis.txt")
     }

@@ -176,6 +176,30 @@ button:disabled { opacity: 0.5; cursor: wait; }
   margin-top: 18px;
 }
 
+.db-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.db-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.db-form input { width: 100%; }
+.db-pass-row { display: flex; gap: 8px; }
+.db-pass-row input { flex: 1; }
+.modal-hint code {
+  color: var(--amber);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 @media (max-width: 900px) {
   .grid, .strip, .create, .port-form { grid-template-columns: 1fr; }
   .mast { flex-direction: column; align-items: start; }

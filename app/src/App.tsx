@@ -49,6 +49,11 @@ type PortsSettings = {
   mailpit_ui: number;
 };
 
+type DbCredentials = {
+  user: string;
+  password: string;
+};
+
 type Stack = {
   root: string;
   php_version: string;
@@ -92,6 +97,10 @@ export default function App() {
   const [portsOpen, setPortsOpen] = useState(false);
   const [portsDraft, setPortsDraft] = useState<PortsSettings | null>(null);
   const [portsError, setPortsError] = useState("");
+  const [dbOpen, setDbOpen] = useState(false);
+  const [dbDraft, setDbDraft] = useState<DbCredentials | null>(null);
+  const [dbError, setDbError] = useState("");
+  const [showDbPassword, setShowDbPassword] = useState(false);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -156,6 +165,35 @@ export default function App() {
       await refresh();
     } catch (e) {
       setPortsError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openDbModal() {
+    setDbError("");
+    setShowDbPassword(false);
+    try {
+      const cfg = await invoke<DbCredentials>("get_db_credentials");
+      setDbDraft(cfg);
+      setDbOpen(true);
+    } catch (e) {
+      setLog(String(e));
+    }
+  }
+
+  async function saveDb() {
+    if (!dbDraft) return;
+    setDbError("");
+    setBusy("db-save");
+    setLog("");
+    try {
+      const msg = await invoke<string>("update_db_credentials", { creds: dbDraft });
+      setDbOpen(false);
+      setLog(msg);
+      await refresh();
+    } catch (e) {
+      setDbError(String(e));
     } finally {
       setBusy(null);
     }
@@ -333,6 +371,9 @@ export default function App() {
         >
           Adminer
         </button>
+        <button type="button" disabled={!!busy} onClick={openDbModal}>
+          Base de datos
+        </button>
         <button
           onClick={() =>
             run("web", async () => {
@@ -442,6 +483,90 @@ export default function App() {
                 Guardar y reiniciar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {dbOpen && dbDraft && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setDbOpen(false)}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="db-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="db-modal-title">Base de datos</h2>
+            <p className="modal-hint">
+              Por defecto: usuario <code>root</code> sin contraseña (solo 127.0.0.1). Puedes
+              cambiarlos; se guardan en secrets (fuera de git) y se aplican a MariaDB si está
+              en marcha.
+            </p>
+            <div className="db-form">
+              <label>
+                <span>Usuario</span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={dbDraft.user}
+                  disabled={!!busy}
+                  onChange={(e) =>
+                    setDbDraft((prev) => (prev ? { ...prev, user: e.target.value } : prev))
+                  }
+                />
+              </label>
+              <label>
+                <span>Contraseña</span>
+                <div className="db-pass-row">
+                  <input
+                    type={showDbPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    value={dbDraft.password}
+                    disabled={!!busy}
+                    placeholder="(vacía = sin contraseña)"
+                    onChange={(e) =>
+                      setDbDraft((prev) =>
+                        prev ? { ...prev, password: e.target.value } : prev,
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    disabled={!!busy}
+                    onClick={() => setShowDbPassword((v) => !v)}
+                  >
+                    {showDbPassword ? "Ocultar" : "Ver"}
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() =>
+                  setDbDraft((prev) =>
+                    prev ? { user: "root", password: "" } : prev,
+                  )
+                }
+              >
+                Restablecer default
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" disabled={!!busy} onClick={() => setDbOpen(false)}>
+                  Cancelar
+                </button>
+                <button type="button" className="go" disabled={!!busy} onClick={saveDb}>
+                  Guardar
+                </button>
+              </div>
+            </div>
+            {dbError && <p className="modal-error">{dbError}</p>}
           </div>
         </div>
       )}
