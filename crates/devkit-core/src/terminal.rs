@@ -2,6 +2,13 @@ use crate::error::{Error, Result};
 use crate::paths::{AppConfig, Paths};
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// CREATE_NEW_CONSOLE: una ventana nueva sin pasar por `start` / `wt.exe`.
+#[cfg(windows)]
+const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
 pub fn isolated_path(paths: &Paths, cfg: &AppConfig) -> String {
     let mut parts: Vec<String> = Vec::new();
     let php = paths.php_dir(&cfg.php_version);
@@ -20,40 +27,74 @@ pub fn isolated_path(paths: &Paths, cfg: &AppConfig) -> String {
     format!("{};{}", parts.join(";"), orig)
 }
 
+/// Abre una sola consola `cmd` con PATH de DevKit y cwd en la raíz del kit.
 pub fn open_terminal(paths: &Paths, cfg: &AppConfig) -> Result<()> {
     let path = isolated_path(paths, cfg);
-    let wt = r"C:\Users\{}\AppData\Local\Microsoft\WindowsApps\wt.exe";
-    let user = std::env::var("USERNAME").unwrap_or_default();
-    let wt_path = wt.replace("{}", &user);
-    let title = "DevKit";
-    let _cmd_line = format!(
-        "cmd.exe /K \"set PATH={path}&& title {title}&& cd /d {}\"",
-        paths.root.display()
-    );
-    if PathExists(&wt_path) || which("wt.exe") {
-        let status = Command::new("wt.exe")
-            .args(["-d", &paths.root.to_string_lossy(), "cmd", "/K", &format!("set PATH={path}&& title DevKit")])
-            .spawn();
-        if status.is_ok() {
-            return Ok(());
-        }
+    let mut cmd = Command::new("cmd.exe");
+    cmd.env("PATH", &path)
+        .current_dir(&paths.root)
+        .args(["/K", "title DevKit"]);
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NEW_CONSOLE);
     }
-    Command::new("cmd.exe")
-        .args(["/C", "start", "DevKit", "cmd.exe", "/K", &format!("set PATH={path}&& cd /d {}", paths.root.display())])
-        .spawn()
+
+    cmd.spawn()
         .map_err(|e| Error::msg(format!("no se pudo abrir terminal: {e}")))?;
     Ok(())
 }
 
-fn which(name: &str) -> bool {
-    Command::new("where")
-        .arg(name)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::Paths;
+    use tempfile::tempdir;
 
-#[allow(non_snake_case)]
-fn PathExists(p: &str) -> bool {
-    std::path::Path::new(p).is_file()
+    #[test]
+    fn isolated_path_puts_php_and_composer_first() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs_layout(root);
+        let paths = Paths::from_root(root.to_path_buf());
+        let cfg = AppConfig {
+            php_version: "8.3".into(),
+            ..AppConfig::default()
+        };
+        let path = isolated_path(&paths, &cfg);
+        let php = paths.php_dir("8.3").to_string_lossy().into_owned();
+        let composer = paths.bin.join("composer").to_string_lossy().into_owned();
+        assert!(
+            path.starts_with(&format!("{php};{composer};")),
+            "PATH debe priorizar PHP luego Composer: {path}"
+        );
+    }
+
+    #[test]
+    fn isolated_path_includes_node_and_mariadb_when_present() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs_layout(root);
+        std::fs::create_dir_all(root.join("bin/node")).unwrap();
+        std::fs::write(root.join("bin/node/node.exe"), []).unwrap();
+        std::fs::create_dir_all(root.join("bin/mariadb/bin")).unwrap();
+        let paths = Paths::from_root(root.to_path_buf());
+        let cfg = AppConfig {
+            php_version: "8.3".into(),
+            ..AppConfig::default()
+        };
+        let path = isolated_path(&paths, &cfg);
+        assert!(path.contains("node"));
+        assert!(path.contains("mariadb"));
+    }
+
+    fn fs_layout(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
+        std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::create_dir_all(root.join("www")).unwrap();
+        std::fs::create_dir_all(root.join("etc/devkit")).unwrap();
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+        std::fs::create_dir_all(root.join("tmp")).unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+    }
 }
