@@ -111,6 +111,8 @@ export default function App() {
   const [extList, setExtList] = useState<PhpExtensionInfo[]>([]);
   const [extError, setExtError] = useState("");
   const [extFilter, setExtFilter] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -124,6 +126,24 @@ export default function App() {
       setLog(String(e));
     }
   }, []);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoreOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
 
   useEffect(() => {
     refresh();
@@ -419,10 +439,15 @@ export default function App() {
       </main>
 
       <section className="tools">
-        <button onClick={() => run("term", () => invoke("open_terminal"))}>
-          Terminal PATH aislado
+        <button
+          type="button"
+          title="Abre cmd/Terminal con PATH de DevKit (php, composer, mysql…)"
+          onClick={() => run("term", () => invoke("open_terminal"))}
+        >
+          Terminal
         </button>
         <button
+          type="button"
           onClick={() =>
             run("adminer", async () => {
               const url = await invoke<string>("adminer_url");
@@ -433,54 +458,149 @@ export default function App() {
         >
           Adminer
         </button>
-        <button type="button" disabled={!!busy} onClick={openDbModal}>
-          Base de datos
-        </button>
-        <button type="button" disabled={!!busy} onClick={openExtModal}>
-          Extensiones PHP
-        </button>
-        <button
-          onClick={() =>
-            run("web", async () => {
-              const url = await invoke<string>("default_url");
-              await invoke("open_in_browser", { url });
-              return url;
-            })
-          }
-        >
-          Abrir :{httpPort}
-        </button>
-        <button onClick={() => run("ports", () => invoke("check_ports"))}>
-          Revisar puertos
-        </button>
-        <button type="button" disabled={!!busy} onClick={openPortsModal}>
-          Editar puertos
-        </button>
-        <button
-          type="button"
-          disabled={!!busy}
-          title="Solo actualiza el bloque # BEGIN DEVKIT. Puede pedir UAC."
-          onClick={() => run("hosts", () => invoke("ensure_hosts"))}
-        >
-          Actualizar hosts
-        </button>
-        <button onClick={() => run("ssl", () => invoke("enable_ssl"))}>SSL mkcert</button>
-        <button onClick={() => run("pack", () => invoke("pack_portable"))}>Zip portable</button>
-        <button onClick={() => run("setup", () => invoke("setup_stack", { full: true }))}>
-          Setup completo
-        </button>
-        {php.length > 0 && (
-          <select
-            value={stack?.php_version}
-            onChange={(e) => run("php", () => invoke("use_php", { version: e.target.value }))}
+        <div className="tools-more" ref={moreRef}>
+          <button
+            type="button"
+            className={moreOpen ? "tools-more-btn open" : "tools-more-btn"}
+            aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            disabled={!!busy}
+            onClick={() => setMoreOpen((o) => !o)}
           >
-            {php.map((v) => (
-              <option key={v} value={v}>
-                PHP {v}
-              </option>
-            ))}
-          </select>
-        )}
+            Más…
+          </button>
+          {moreOpen && (
+            <div className="tools-dropdown" role="menu">
+              <p className="tools-group">Base de datos</p>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  openDbModal();
+                }}
+              >
+                Credenciales
+              </button>
+
+              <p className="tools-group">PHP</p>
+              {php.length > 0 ? (
+                <select
+                  className="tools-php"
+                  value={stack?.php_version}
+                  disabled={!!busy}
+                  aria-label="Versión de PHP"
+                  onChange={(e) => {
+                    setMoreOpen(false);
+                    run("php", () => invoke("use_php", { version: e.target.value }));
+                  }}
+                >
+                  {php.map((v) => (
+                    <option key={v} value={v}>
+                      PHP {v}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="tools-empty">Sin PHP instalado</p>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  openExtModal();
+                }}
+              >
+                Extensiones
+              </button>
+
+              <p className="tools-group">Red</p>
+              <button
+                type="button"
+                role="menuitem"
+                title={`Abrir http://127.0.0.1:${httpPort}/`}
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("web", async () => {
+                    const url = await invoke<string>("default_url");
+                    await invoke("open_in_browser", { url });
+                    return url;
+                  });
+                }}
+              >
+                Abrir localhost :{httpPort}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("ports", () => invoke("check_ports"));
+                }}
+              >
+                Revisar puertos
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  openPortsModal();
+                }}
+              >
+                Editar puertos
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                title="Solo actualiza el bloque # BEGIN DEVKIT. Puede pedir UAC."
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("hosts", () => invoke("ensure_hosts"));
+                }}
+              >
+                Actualizar hosts
+              </button>
+
+              <p className="tools-group">Sistema</p>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("ssl", () => invoke("enable_ssl"));
+                }}
+              >
+                SSL mkcert
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("pack", () => invoke("pack_portable"));
+                }}
+              >
+                Zip portable
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  run("setup", () => invoke("setup_stack", { full: true }));
+                }}
+              >
+                Setup completo
+              </button>
+            </div>
+          )}
+        </div>
       </section>
 
       {(busy || log || stack?.warnings?.length) && (
