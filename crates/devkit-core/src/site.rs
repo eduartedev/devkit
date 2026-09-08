@@ -75,6 +75,15 @@ pub fn site_root(paths: &Paths, name: &str) -> Result<PathBuf> {
     Ok(candidate)
 }
 
+/// Document root para nginx: `public/` si es Laravel (u otro app con public/index.php).
+pub fn detect_web_root(project: &Path) -> PathBuf {
+    let public_index = project.join("public").join("index.php");
+    if public_index.is_file() {
+        return project.join("public");
+    }
+    project.to_path_buf()
+}
+
 pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
     let mut sites = Vec::new();
     if !paths.www.exists() {
@@ -95,7 +104,8 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
         let Ok(name) = parse_site_name(raw) else {
             continue;
         };
-        let root = entry.path();
+        let project = entry.path();
+        let root = detect_web_root(&project);
         let hostname = format!("{name}.{}", cfg.tld);
         let url = if cfg.ssl {
             format!("https://{hostname}:{}", cfg.https_port)
@@ -155,5 +165,24 @@ mod tests {
     fn dot_hidden_rejected_by_leading() {
         // ".hidden" starts with '.' which is not alphanumeric
         assert!(parse_site_name(".hidden").is_err());
+    }
+
+    #[test]
+    fn laravel_uses_public_as_web_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("app");
+        fs::create_dir_all(project.join("public")).unwrap();
+        fs::write(project.join("public").join("index.php"), "<?php").unwrap();
+        fs::write(project.join("artisan"), "#!/usr/bin/env php").unwrap();
+        assert_eq!(detect_web_root(&project), project.join("public"));
+    }
+
+    #[test]
+    fn plain_php_uses_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("plain");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("index.php"), "<?php").unwrap();
+        assert_eq!(detect_web_root(&project), project);
     }
 }

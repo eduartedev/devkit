@@ -189,6 +189,16 @@ async fn update_db_credentials(
 }
 
 #[tauri::command]
+async fn regenerate_vhosts(state: State<'_, KitState>) -> Result<String, String> {
+    with_kit(&state, |kit| kit.regenerate_vhosts().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn open_site_vhost(state: State<'_, KitState>, name: String) -> Result<String, String> {
+    with_kit(&state, move |kit| kit.open_site_vhost(&name).map_err(map_err)).await
+}
+
+#[tauri::command]
 fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
@@ -226,6 +236,8 @@ pub fn run() {
             ensure_hosts,
             get_db_credentials,
             update_db_credentials,
+            regenerate_vhosts,
+            open_site_vhost,
             start_all,
             stop_all,
             start_service,

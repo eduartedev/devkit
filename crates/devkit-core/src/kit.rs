@@ -765,8 +765,49 @@ impl DevKit {
                 )))
             }
         };
+        // Regenera vhosts (Laravel → public/) y hosts.
         self.reload_sites()?;
+        let _ = self.ensure_hosts();
         Ok(path)
+    }
+
+    /// Reescribe todos los vhosts nginx según www/ (Laravel usa public/).
+    pub fn regenerate_vhosts(&mut self) -> Result<String> {
+        let sites = self.reload_sites()?;
+        let n = sites.iter().filter(|s| s.name != "default").count();
+        Ok(format!(
+            "vhosts regenerados ({n} sitios). Laravel usa document root public/."
+        ))
+    }
+
+    pub fn site_vhost_path(&self, name: &str) -> Result<std::path::PathBuf> {
+        let safe = crate::site::parse_site_name(name)?;
+        if safe == "default" {
+            return Ok(self.paths.nginx_conf());
+        }
+        Ok(self.paths.nginx_sites().join(format!("{safe}.conf")))
+    }
+
+    pub fn open_site_vhost(&self, name: &str) -> Result<String> {
+        let path = self.site_vhost_path(name)?;
+        if !path.exists() {
+            return Err(Error::msg(format!(
+                "no existe {}; pulsa Regenerar vhosts",
+                path.display()
+            )));
+        }
+        #[cfg(windows)]
+        {
+            let _ = Command::new("notepad")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| Error::msg(format!("no se pudo abrir notepad: {e}")))?;
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = Command::new("xdg-open").arg(&path).spawn();
+        }
+        Ok(path.display().to_string())
     }
 
     pub fn enable_ssl(&mut self) -> Result<String> {

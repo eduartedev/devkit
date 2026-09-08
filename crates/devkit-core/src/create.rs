@@ -35,7 +35,7 @@ pub fn create_laravel(paths: &Paths, php_version: &str, name: &str) -> Result<st
     if !composer.exists() {
         return Err(Error::MissingBinary { path: composer });
     }
-    let status = Command::new(php)
+    let status = Command::new(&php)
         .arg(&composer)
         .args([
             "create-project",
@@ -48,6 +48,13 @@ pub fn create_laravel(paths: &Paths, php_version: &str, name: &str) -> Result<st
     if !status.success() {
         return Err(Error::msg("composer create-project laravel falló"));
     }
+    // Laravel sirve desde public/; nginx lo detecta al regenerar vhosts.
+    let artisan = root.join("artisan");
+    let _ = Command::new(&php)
+        .arg(&artisan)
+        .args(["migrate", "--force"])
+        .current_dir(&root)
+        .status();
     Ok(root)
 }
 

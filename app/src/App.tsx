@@ -280,16 +280,39 @@ export default function App() {
         </section>
 
         <section className="panel">
-          <h2>Sitios · www</h2>
+          <div className="panel-head">
+            <h2>Sitios · www</h2>
+            <button
+              type="button"
+              disabled={!!busy}
+              title="Reescribe etc/nginx/sites (Laravel → public/)"
+              onClick={() => run("vhosts", () => invoke("regenerate_vhosts"))}
+            >
+              Regenerar vhosts
+            </button>
+          </div>
           <ul className="sites">
             {stack?.sites.map((s) => (
               <li key={s.name}>
-                <button
-                  className="link"
-                  onClick={() => invoke("open_in_browser", { url: s.url })}
-                >
-                  {s.hostname}
-                </button>
+                <div className="site-row">
+                  <button
+                    className="link"
+                    onClick={() => invoke("open_in_browser", { url: s.url })}
+                  >
+                    {s.hostname}
+                  </button>
+                  <button
+                    type="button"
+                    className="mini"
+                    disabled={!!busy}
+                    title="Editar vhost en bloc de notas"
+                    onClick={() =>
+                      run("vhost", () => invoke("open_site_vhost", { name: s.name }))
+                    }
+                  >
+                    vhost
+                  </button>
+                </div>
                 <code>{s.url}</code>
               </li>
             ))}
