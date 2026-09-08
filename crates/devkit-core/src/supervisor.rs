@@ -236,13 +236,23 @@ impl Supervisor {
     pub fn stop(&self, spec: &ServiceSpec) -> Result<ServiceSnapshot> {
         match spec.stop {
             StopKind::NginxQuit => {
-                let _ = Command::new(&spec.binary)
-                    .args(["-s", "quit"])
-                    .current_dir(spec.cwd.clone().unwrap_or_else(|| PathBuf::from(".")))
-                    .status();
+                // Debe usar el mismo -p/-c con el que arrancó; si no, quit no llega al master.
+                let mut cmd = Command::new(&spec.binary);
+                cmd.args(&spec.args).args(["-s", "quit"]);
+                if let Some(cwd) = &spec.cwd {
+                    cmd.current_dir(cwd);
+                }
+                let _ = cmd.status();
+                // stop es más agresivo si quit no cierra a tiempo.
+                let mut cmd = Command::new(&spec.binary);
+                cmd.args(&spec.args).args(["-s", "stop"]);
+                if let Some(cwd) = &spec.cwd {
+                    cmd.current_dir(cwd);
+                }
+                let _ = cmd.status();
             }
             StopKind::MysqlAdmin => {
-                // caller should pass extra env; we try generic shutdown
+                // Preferir stop_mysql_admin desde kit; aquí solo fuerza después.
             }
             StopKind::RedisShutdown => {
                 if let Ok(mut stream) =
@@ -270,13 +280,20 @@ impl Supervisor {
             }
         }
 
+        // Segunda pasada: lo que siga escuchando el puerto con nombre del servicio.
+        kill_listeners_for_service(spec);
         wait_until_closed(&spec.bind_host, spec.port, 40);
         if is_port_open(&spec.bind_host, spec.port) {
-            if let Some(pid) = read_pid(&spec.pidfile) {
-                kill_pid(pid);
-            }
+            kill_listeners_for_service(spec);
+            wait_until_closed(&spec.bind_host, spec.port, 20);
         }
         let _ = fs::remove_file(&spec.pidfile);
+        // Nginx escribe también logs/nginx.pid (master).
+        if spec.id == "nginx" {
+            if let Some(parent) = spec.pidfile.parent() {
+                let _ = fs::remove_file(parent.join("nginx.pid"));
+            }
+        }
         Ok(self.snapshot(spec))
     }
 
@@ -305,6 +322,30 @@ impl Supervisor {
 fn read_pid(path: &PathBuf) -> Option<u32> {
     let text = fs::read_to_string(path).ok()?;
     text.trim().parse().ok()
+}
+
+fn expected_process_names(service_id: &str) -> &'static [&'static str] {
+    match service_id {
+        "nginx" => &["nginx"],
+        "php" => &["php-cgi", "php"],
+        "mariadb" => &["mysqld", "mariadbd", "mariadb"],
+        "redis" => &["redis-server", "redis"],
+        "mailpit" => &["mailpit"],
+        _ => &[],
+    }
+}
+
+fn kill_listeners_for_service(spec: &ServiceSpec) {
+    let names = expected_process_names(&spec.id);
+    if names.is_empty() {
+        return;
+    }
+    for proc in crate::ports::find_listeners(spec.port) {
+        let n = proc.name.to_ascii_lowercase();
+        if names.iter().any(|want| n.contains(want)) {
+            kill_pid(proc.pid);
+        }
+    }
 }
 
 fn kill_pid(pid: u32) {
