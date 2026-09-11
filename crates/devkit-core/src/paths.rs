@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -220,6 +220,13 @@ pub struct AppConfig {
     /// Extensiones PHP activas (nombres sin `php_` / `.dll`). Vacío = defaults.
     #[serde(default = "default_php_extensions")]
     pub php_extensions: Vec<String>,
+    /// Si true, carpetas en www/ que sean junction/symlink cuentan como sitios.
+    #[serde(default = "default_true")]
+    pub follow_www_junctions: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_php_extensions() -> Vec<String> {
@@ -257,6 +264,7 @@ impl Default for AppConfig {
             ssl: false,
             tld: "test".to_string(),
             php_extensions: default_php_extensions(),
+            follow_www_junctions: true,
         }
     }
 }
@@ -282,5 +290,48 @@ impl AppConfig {
         }
         fs::write(path, toml::to_string_pretty(self)?)?;
         Ok(())
+    }
+}
+
+/// Ajustes de la app DevKit (no puertos ni secretos de DB).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub tld: String,
+    pub follow_www_junctions: bool,
+}
+
+impl AppSettings {
+    pub fn from_config(cfg: &AppConfig) -> Self {
+        Self {
+            tld: cfg.tld.clone(),
+            follow_www_junctions: cfg.follow_www_junctions,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let tld = self.tld.trim().to_ascii_lowercase();
+        if tld.is_empty() {
+            return Err(Error::msg("TLD vacío"));
+        }
+        if tld.len() > 24 {
+            return Err(Error::msg("TLD demasiado largo"));
+        }
+        if !tld
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(Error::msg(
+                "TLD inválido: solo a-z, 0-9 y guion (ej. test)",
+            ));
+        }
+        if tld.starts_with('-') || tld.ends_with('-') {
+            return Err(Error::msg("TLD no puede empezar o terminar con guion"));
+        }
+        Ok(())
+    }
+
+    pub fn apply_to(&self, cfg: &mut AppConfig) {
+        cfg.tld = self.tld.trim().to_ascii_lowercase();
+        cfg.follow_www_junctions = self.follow_www_junctions;
     }
 }

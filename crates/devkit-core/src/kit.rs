@@ -872,6 +872,32 @@ impl DevKit {
         ))
     }
 
+    pub fn app_settings(&self) -> crate::paths::AppSettings {
+        crate::paths::AppSettings::from_config(&self.config)
+    }
+
+    /// Guarda ajustes de la app, regenera vhosts y actualiza hosts.
+    pub fn update_app_settings(
+        &mut self,
+        settings: crate::paths::AppSettings,
+    ) -> Result<String> {
+        settings.validate()?;
+        settings.apply_to(&mut self.config);
+        self.config.save(&self.paths.config_file())?;
+        let sites = self.reload_sites()?;
+        let _ = self.ensure_hosts();
+        Ok(format!(
+            "configuración guardada ({} sitio(s), tld=.{}, junctions={})",
+            sites.len(),
+            self.config.tld,
+            if self.config.follow_www_junctions {
+                "sí"
+            } else {
+                "no"
+            }
+        ))
+    }
+
     /// Guarda puertos, regenera configs y reinicia el stack.
     pub fn update_ports(&mut self, ports: crate::ports::PortsSettings) -> Result<StackStatus> {
         ports.validate()?;

@@ -75,10 +75,14 @@ pub fn site_root(paths: &Paths, name: &str) -> Result<PathBuf> {
     Ok(candidate)
 }
 
-/// Document root para nginx: `public/` si es Laravel (u otro app con public/index.php).
+/// Document root para nginx:
+/// - Laravel (u app con solo `public/index.php`) → `public/`
+/// - App con `index.php` en la raíz (aunque exista `public/`) → proyecto
+///   (común en proyectos Laragon híbridos que sirven `/public/...` en URLs).
 pub fn detect_web_root(project: &Path) -> PathBuf {
     let public_index = project.join("public").join("index.php");
-    if public_index.is_file() {
+    let root_index = project.join("index.php");
+    if public_index.is_file() && !root_index.is_file() {
         return project.join("public");
     }
     project.to_path_buf()
@@ -94,7 +98,19 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
         .collect();
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
-        if !entry.file_type()?.is_dir() {
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        // En Windows, junctions/symlinks de carpeta: is_symlink=true e is_dir=false
+        // en DirEntry; Path::is_dir() sí sigue el enlace.
+        let is_plain_dir = ft.is_dir();
+        let is_dir_link = ft.is_symlink() && path.is_dir();
+        if is_plain_dir {
+            // ok
+        } else if is_dir_link {
+            if !cfg.follow_www_junctions {
+                continue;
+            }
+        } else {
             continue;
         }
         let fname = entry.file_name();
@@ -104,7 +120,7 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
         let Ok(name) = parse_site_name(raw) else {
             continue;
         };
-        let project = entry.path();
+        let project = path;
         let root = detect_web_root(&project);
         let hostname = format!("{name}.{}", cfg.tld);
         let url = if cfg.ssl {
@@ -140,6 +156,7 @@ pub fn nginx_escape_root(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::{AppConfig, Paths};
 
     #[test]
     fn valid_names() {
@@ -178,11 +195,68 @@ mod tests {
     }
 
     #[test]
+    fn hybrid_root_index_keeps_project_as_web_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("hybrid");
+        fs::create_dir_all(project.join("public")).unwrap();
+        fs::write(project.join("index.php"), "<?php").unwrap();
+        fs::write(project.join("public").join("index.php"), "<?php").unwrap();
+        assert_eq!(detect_web_root(&project), project);
+    }
+
+    #[test]
     fn plain_php_uses_project_root() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("plain");
         fs::create_dir_all(&project).unwrap();
         fs::write(project.join("index.php"), "<?php").unwrap();
         assert_eq!(detect_web_root(&project), project);
+    }
+
+    #[test]
+    fn scan_includes_directory_symlink_or_junction() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let www = root.join("www");
+        let real = root.join("real-app");
+        fs::create_dir_all(www.join("default")).unwrap();
+        fs::create_dir_all(real.join("public")).unwrap();
+        fs::write(real.join("public").join("index.php"), "<?php").unwrap();
+        let link = www.join("linked");
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    &link.to_string_lossy(),
+                    &real.to_string_lossy(),
+                ])
+                .status()
+                .unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+        }
+        assert!(link.is_dir());
+        let paths = Paths::from_root(root.to_path_buf());
+        let sites = scan_sites(&paths, &AppConfig::default()).unwrap();
+        assert!(
+            sites.iter().any(|s| s.name == "linked"),
+            "debe detectar junction/symlink: {:?}",
+            sites.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        let site = sites.iter().find(|s| s.name == "linked").unwrap();
+        assert_eq!(site.root, link.join("public"));
+
+        let mut cfg_off = AppConfig::default();
+        cfg_off.follow_www_junctions = false;
+        let skipped = scan_sites(&paths, &cfg_off).unwrap();
+        assert!(
+            !skipped.iter().any(|s| s.name == "linked"),
+            "con follow_www_junctions=false no debe listar el enlace"
+        );
     }
 }

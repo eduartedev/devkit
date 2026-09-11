@@ -26,7 +26,7 @@ pub mod model;
 pub use error::{Error, Result};
 pub use kit::DevKit;
 pub use model::*;
-pub use paths::{AppConfig, Paths};
+pub use paths::{AppConfig, AppSettings, Paths};
 pub use php::PhpExtensionInfo;
 pub use secrets::DbCredentials;
 pub use ports::{PortCheck, PortOwner, PortProcess, PortsSettings};
