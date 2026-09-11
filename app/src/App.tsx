@@ -60,6 +60,11 @@ type PhpExtensionInfo = {
   enabled: boolean;
 };
 
+type AppSettings = {
+  tld: string;
+  follow_www_junctions: boolean;
+};
+
 type Stack = {
   root: string;
   php_version: string;
@@ -112,6 +117,9 @@ export default function App() {
   const [extError, setExtError] = useState("");
   const [extFilter, setExtFilter] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [appOpen, setAppOpen] = useState(false);
+  const [appDraft, setAppDraft] = useState<AppSettings | null>(null);
+  const [appError, setAppError] = useState("");
   const moreRef = useRef<HTMLDivElement>(null);
 
   const busyRef = useRef(busy);
@@ -224,6 +232,34 @@ export default function App() {
       await refresh();
     } catch (e) {
       setDbError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openAppModal() {
+    setAppError("");
+    try {
+      const cfg = await invoke<AppSettings>("get_app_settings");
+      setAppDraft(cfg);
+      setAppOpen(true);
+    } catch (e) {
+      setLog(String(e));
+    }
+  }
+
+  async function saveApp() {
+    if (!appDraft) return;
+    setAppError("");
+    setBusy("app-settings");
+    setLog("");
+    try {
+      const msg = await invoke<string>("update_app_settings", { settings: appDraft });
+      setAppOpen(false);
+      setLog(msg);
+      await refresh();
+    } catch (e) {
+      setAppError(String(e));
     } finally {
       setBusy(null);
     }
@@ -471,6 +507,19 @@ export default function App() {
           </button>
           {moreOpen && (
             <div className="tools-dropdown" role="menu">
+              <p className="tools-group">DevKit</p>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  openAppModal();
+                }}
+              >
+                Configuración
+              </button>
+
               <p className="tools-group">Base de datos</p>
               <button
                 type="button"
@@ -666,6 +715,109 @@ export default function App() {
                 onClick={savePorts}
               >
                 Guardar y reiniciar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appOpen && appDraft && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setAppOpen(false)}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="app-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">DevKit · app</p>
+              <h2 id="app-modal-title">Configuración</h2>
+              <p className="modal-hint">
+                Al guardar se regeneran vhosts y se actualiza el bloque hosts de DevKit.
+              </p>
+            </header>
+
+            <section className="settings-section">
+              <h3 className="settings-section-title">Sitios</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">TLD</span>
+                  <p className="settings-desc">
+                    Sufijo de los hostnames locales (
+                    <code>
+                      nombre.<b>{appDraft.tld.trim() || "…"}</b>
+                    </code>
+                    ).
+                  </p>
+                </div>
+                <div className="settings-control settings-control-tld">
+                  <span className="tld-prefix">*.</span>
+                  <input
+                    value={appDraft.tld}
+                    disabled={!!busy}
+                    placeholder="test"
+                    aria-label="TLD de sitios"
+                    onChange={(e) =>
+                      setAppDraft((prev) =>
+                        prev ? { ...prev, tld: e.target.value } : prev,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3 className="settings-section-title">Carpeta www</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">Junctions / symlinks</span>
+                  <p className="settings-desc">
+                    Si está activo, las carpetas enlazadas en <code>www/</code> (p. ej. desde
+                    Laragon) cuentan como sitios. Si no, solo carpetas reales.
+                  </p>
+                </div>
+                <div className="settings-control">
+                  <button
+                    type="button"
+                    role="switch"
+                    className={
+                      appDraft.follow_www_junctions ? "switch on" : "switch"
+                    }
+                    aria-checked={appDraft.follow_www_junctions}
+                    disabled={!!busy}
+                    onClick={() =>
+                      setAppDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              follow_www_junctions: !prev.follow_www_junctions,
+                            }
+                          : prev,
+                      )
+                    }
+                  >
+                    <span className="switch-knob" />
+                    <span className="switch-text">
+                      {appDraft.follow_www_junctions ? "Sí" : "No"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {appError && <p className="modal-error">{appError}</p>}
+            <div className="modal-actions">
+              <button type="button" disabled={!!busy} onClick={() => setAppOpen(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="go" disabled={!!busy} onClick={saveApp}>
+                Guardar
               </button>
             </div>
           </div>

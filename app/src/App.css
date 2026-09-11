@@ -159,6 +159,196 @@ button:disabled { opacity: 0.5; cursor: wait; }
   text-transform: none;
   letter-spacing: 0;
 }
+.app-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0;
+}
+.app-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+}
+.app-form > label > span { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.check-row {
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 10px !important;
+}
+.check-row input[type="checkbox"] {
+  margin-top: 3px;
+  width: auto;
+}
+.check-row span {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--ink) !important;
+  font-size: 13px !important;
+}
+.check-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.modal-settings {
+  width: min(560px, 100%);
+  padding: 0;
+  overflow: hidden;
+}
+.settings-head {
+  padding: 20px 22px 8px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #1a1f24 0%, var(--panel) 100%);
+}
+.settings-kicker {
+  margin: 0 0 4px;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+.settings-head h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+.settings-head .modal-hint { margin-bottom: 14px; }
+.settings-section {
+  padding: 14px 22px;
+  border-bottom: 1px solid #1e242b;
+}
+.settings-section:last-of-type { border-bottom: 0; }
+.settings-section-title {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px 20px;
+  align-items: center;
+}
+.settings-copy { min-width: 0; }
+.settings-label {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.settings-desc {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.settings-desc code {
+  color: var(--amber);
+  font-size: 11px;
+}
+.settings-desc b { color: var(--ink); font-weight: 700; }
+.settings-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.settings-control-tld {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  background: #0c0e10;
+  min-width: 132px;
+}
+.settings-control-tld:focus-within { border-color: var(--amber); }
+.tld-prefix {
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+  color: var(--dim);
+  border-right: 1px solid var(--line);
+  font-size: 12px;
+}
+.settings-control-tld input {
+  border: 0;
+  background: transparent;
+  width: 88px;
+  text-align: left;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 72px;
+  padding: 4px 8px 4px 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  background: #0c0e10;
+}
+.switch-knob {
+  width: 28px;
+  height: 16px;
+  border-radius: 99px;
+  background: #2a323c;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+.switch-knob::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.switch.on { border-color: #3ee0a055; }
+.switch.on .switch-knob { background: #1a3a2e; }
+.switch.on .switch-knob::after {
+  transform: translateX(12px);
+  background: var(--green);
+}
+.switch-text {
+  font-size: 11px;
+  color: var(--dim);
+  min-width: 1.5em;
+}
+.switch.on .switch-text { color: var(--green); }
+.modal-settings .modal-actions {
+  padding: 14px 22px 18px;
+  margin-top: 0;
+  border-top: 1px solid var(--line);
+  background: #10141a;
+}
+.modal-settings .modal-error {
+  margin: 12px 22px 0;
+}
+
+@media (max-width: 560px) {
+  .settings-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .settings-control { justify-content: flex-start; }
+}
+
 .log {
   margin: 0;
   background: #090b0d;
