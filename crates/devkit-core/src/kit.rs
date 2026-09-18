@@ -27,6 +27,7 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
 const DETACHED: u32 = 0x0000_0008 | 0x0800_0000 | 0x0000_0200;
+// DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
 
 pub struct DevKit {
     pub paths: Paths,
@@ -235,7 +236,9 @@ impl DevKit {
                             .stderr(Stdio::null());
                         #[cfg(windows)]
                         cmd.creation_flags(DETACHED);
+                        let _inherit_guard = crate::win_spawn::StdioInheritGuard::clear();
                         if let Ok(child) = cmd.spawn() {
+                            drop(_inherit_guard);
                             let _ = fs::write(&pidfile, child.id().to_string());
                             std::mem::forget(child);
                             dns_ok = true;
@@ -608,10 +611,13 @@ impl DevKit {
 
     pub fn start_all(&mut self, detach: bool) -> Result<StackStatus> {
         self.paths.ensure()?;
+        eprintln!("devkit: preparando sitios…");
         self.reload_sites()?;
+        eprintln!("devkit: DNS / hosts…");
         self.start_dns_or_hosts()?;
         let mut warnings = Vec::new();
 
+        eprintln!("devkit: comprobando puertos…");
         let port_checks = self.check_ports().unwrap_or_default();
         for check in &port_checks {
             if check.is_conflict() {
@@ -637,6 +643,7 @@ impl DevKit {
                 if blocked {
                     continue;
                 }
+                eprintln!("devkit: arrancando {}…", spec.display_name);
                 match self.supervisor.start(spec, detach) {
                     Ok(snap) => {
                         if snap.status == ServiceStatus::Crashed {
@@ -650,6 +657,7 @@ impl DevKit {
         if crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
             let _ = self.set_mysql_password_if_needed();
         }
+        eprintln!("devkit: listo");
         let mut st = self.status()?;
         st.warnings.extend(warnings);
         st.port_checks = self.check_ports().unwrap_or_default();

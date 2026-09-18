@@ -21,6 +21,7 @@ pub mod ssl;
 pub mod supervisor;
 pub mod terminal;
 pub mod watch;
+pub mod win_spawn;
 pub mod model;
 
 pub use error::{Error, Result};

@@ -16,7 +16,7 @@ pub fn hosts_path() -> PathBuf {
 pub fn render_block(sites: &[Site]) -> String {
     let mut lines = vec![
         BEGIN.to_string(),
-        "# Gestionado por DevKit — no borra el resto del archivo".into(),
+        "# Gestionado por DevKit - no borra el resto del archivo".into(),
     ];
     let mut seen = std::collections::BTreeSet::new();
     for site in sites {
@@ -119,6 +119,8 @@ fn hosts_content_equivalent(a: &str, b: &str) -> bool {
 fn normalize_hosts(s: &str) -> String {
     s.replace("\r\n", "\n")
         .replace('\r', "\n")
+        .replace('\u{2014}', "-") // em-dash legado en comentarios
+        .replace('\u{2013}', "-")
         .trim()
         .to_string()
 }
@@ -153,13 +155,17 @@ fn write_hosts_elevated(content: &str) -> Result<()> {
     fs::write(&script, ps)?;
 
     let script_s = script.display().to_string().replace('\'', "''");
+    // -Wait puede colgarse si el UAC queda detrás de otras ventanas; usamos timeout.
     let status = Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
             &format!(
-                "Start-Process -FilePath powershell -Verb RunAs -Wait -WindowStyle Hidden \
-                 -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{script_s}'"
+                "$p = Start-Process -FilePath powershell -Verb RunAs -PassThru -WindowStyle Hidden \
+                 -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{script_s}'; \
+                 if (-not $p) {{ exit 1 }}; \
+                 if (-not $p.WaitForExit(45000)) {{ try {{ $p.Kill() }} catch {{}}; exit 2 }}; \
+                 exit $p.ExitCode"
             ),
         ])
         .stdout(Stdio::null())
@@ -167,6 +173,11 @@ fn write_hosts_elevated(content: &str) -> Result<()> {
         .status()
         .map_err(|e| Error::msg(format!("no se pudo pedir UAC para hosts: {e}")))?;
 
+    if status.code() == Some(2) {
+        return Err(Error::msg(
+            "timeout esperando UAC para hosts (45s). Acepta el aviso de administrador o ejecuta el panel como admin.",
+        ));
+    }
     if !status.success() {
         return Err(Error::msg(
             "no se actualizó hosts (UAC cancelado o denegado). Acepta el aviso de administrador; no se borran entradas de Laragon u otras.",

@@ -185,12 +185,15 @@ impl Supervisor {
             cmd.creation_flags(flags);
         }
 
+        // Quita herencia de pipes del shell mientras spawneamos (ver `win_spawn`).
+        let _inherit_guard = crate::win_spawn::StdioInheritGuard::clear();
         let child = cmd.spawn().map_err(|e| {
             Error::msg(format!(
                 "no se pudo arrancar {}: {e}",
                 spec.display_name
             ))
         })?;
+        drop(_inherit_guard);
         let pid = child.id();
         if let Some(dir) = spec.pidfile.parent() {
             fs::create_dir_all(dir)?;
@@ -304,16 +307,33 @@ impl Supervisor {
         user: &str,
         password: &str,
     ) -> Result<ServiceSnapshot> {
-        if mysqladmin.exists() {
-            let mut args = crate::secrets::mysql_cli_auth_args(user, password);
-            args.extend([
-                "-h".into(),
-                "127.0.0.1".into(),
-                "-P".into(),
-                spec.port.to_string(),
-                "shutdown".into(),
-            ]);
-            let _ = Command::new(mysqladmin).args(&args).status();
+        if mysqladmin.exists() && crate::health::is_port_open(&spec.bind_host, spec.port) {
+            let try_shutdown = |user: &str, password: &str| {
+                let mut args = crate::secrets::mysql_cli_auth_args(user, password);
+                args.extend([
+                    "-h".into(),
+                    "127.0.0.1".into(),
+                    "-P".into(),
+                    spec.port.to_string(),
+                    "shutdown".into(),
+                ]);
+                let _guard = crate::win_spawn::StdioInheritGuard::clear();
+                let ok = Command::new(mysqladmin)
+                    .args(&args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                drop(_guard);
+                ok
+            };
+            if !try_shutdown(user, password) && !password.is_empty() {
+                let _ = try_shutdown(user, "");
+            }
+            // Espera breve al cierre limpio antes del taskkill.
+            let _ = wait_until_closed(&spec.bind_host, spec.port, 20);
         }
         self.stop(spec)
     }

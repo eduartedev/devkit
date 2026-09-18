@@ -172,6 +172,15 @@ pub struct ListeningTable {
 
 impl ListeningTable {
     pub fn capture() -> Self {
+        Self::capture_naming(None)
+    }
+
+    /// Un solo netstat; solo resuelve nombres de PIDs en `ports` (mucho más barato).
+    pub fn capture_for_ports(ports: &[u16]) -> Self {
+        Self::capture_naming(Some(ports))
+    }
+
+    fn capture_naming(only_ports: Option<&[u16]>) -> Self {
         let mut table = Self::default();
         let output = Command::new("netstat")
             .args(["-ano", "-p", "tcp"])
@@ -186,7 +195,16 @@ impl ListeningTable {
         }
         let text = String::from_utf8_lossy(&out.stdout);
         table.by_port = parse_netstat_all_listening(&text);
-        let mut pids: Vec<u32> = table.by_port.values().flatten().copied().collect();
+
+        let mut pids: Vec<u32> = match only_ports {
+            Some(ports) => ports
+                .iter()
+                .filter_map(|p| table.by_port.get(p))
+                .flatten()
+                .copied()
+                .collect(),
+            None => table.by_port.values().flatten().copied().collect(),
+        };
         pids.sort_unstable();
         pids.dedup();
         for pid in pids {
@@ -309,6 +327,22 @@ pub fn classify_port_with_table(
                 .unwrap_or_else(|| "devkit-service".into());
             return PortOwner::Ours { pid: our, name };
         }
+        // Nginx (y similares): el pidfile es el master; quien escucha es un worker hijo.
+        if let Some(our_name) = table.names.get(&our).cloned().or_else(|| process_name(our)) {
+            let our_l = our_name.to_ascii_lowercase();
+            let same_family = listeners.iter().any(|p| {
+                let n = p.name.to_ascii_lowercase();
+                (our_l.contains("nginx") && n.contains("nginx"))
+                    || (our_l.contains("mysqld") && n.contains("mysqld"))
+                    || (our_l.contains("php-cgi") && n.contains("php-cgi"))
+            });
+            if same_family {
+                return PortOwner::Ours {
+                    pid: our,
+                    name: our_name,
+                };
+            }
+        }
     }
 
     if listeners.is_empty() {
@@ -331,7 +365,7 @@ pub fn check_service_port(
     port: u16,
     pidfile: &Path,
 ) -> PortCheck {
-    let table = ListeningTable::capture();
+    let table = ListeningTable::capture_for_ports(&[port]);
     check_service_port_with_table(service, display_name, host, port, pidfile, &table, true)
 }
 
@@ -386,7 +420,8 @@ pub fn check_service_port_with_table(
 pub fn check_many(
     specs: &[(String, String, String, u16, std::path::PathBuf)],
 ) -> Vec<PortCheck> {
-    let table = ListeningTable::capture();
+    let ports: Vec<u16> = specs.iter().map(|(_, _, _, port, _)| *port).collect();
+    let table = ListeningTable::capture_for_ports(&ports);
     let mut out = Vec::with_capacity(specs.len());
     for (id, display, host, port, pidfile) in specs {
         out.push(check_service_port_with_table(
@@ -523,16 +558,37 @@ pub fn process_alive(pid: u32) -> bool {
 }
 
 pub fn process_name(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
     #[cfg(windows)]
     {
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        parse_tasklist_name(&text, pid)
+        use std::path::Path as StdPath;
+        use windows::core::PWSTR;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buf = [0u16; 512];
+            let mut size = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut size,
+            );
+            let _ = CloseHandle(handle);
+            if ok.is_err() || size == 0 {
+                return None;
+            }
+            let path = String::from_utf16_lossy(&buf[..size as usize]);
+            StdPath::new(&path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+        }
     }
     #[cfg(not(windows))]
     {
@@ -593,6 +649,17 @@ mod tests {
             Some("mysqld.exe")
         );
         assert!(parse_tasklist_name(line, 1).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_name_resolves_current_pid_without_tasklist() {
+        let pid = std::process::id();
+        let name = process_name(pid).expect("debe resolver el proceso actual vía Win32");
+        assert!(
+            name.to_ascii_lowercase().ends_with(".exe"),
+            "nombre inesperado: {name}"
+        );
     }
 
     #[test]
