@@ -122,16 +122,12 @@ export default function App() {
   const [appError, setAppError] = useState("");
   const moreRef = useRef<HTMLDivElement>(null);
 
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
-
   const refresh = useCallback(async () => {
-    if (busyRef.current) return;
     try {
       const st = await invoke<Stack>("get_status");
       setStack(st);
-    } catch (e) {
-      setLog(String(e));
+    } catch {
+      // Durante un trabajo pesado puede devolver caché vacía al inicio; reintenta en el poll.
     }
   }, []);
 
@@ -155,13 +151,18 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    // Poll ligero cada 5s; no solapar con acciones (Start/Stop/…).
+    // Poll ligero cada 5s; status usa caché si el kit está ocupado.
     const id = setInterval(refresh, 5000);
     invoke<string[]>("php_versions").then(setPhp).catch(() => {});
     return () => clearInterval(id);
   }, [refresh]);
 
-  async function run(label: string, fn: () => Promise<unknown>) {
+  /** Acciones pesadas: una a la vez (bloquean Start/Stop/config, no Terminal/URLs). */
+  async function runHeavy(label: string, fn: () => Promise<unknown>) {
+    if (busy) {
+      setLog(`ya hay una operación en curso (${busy})`);
+      return;
+    }
     setBusy(label);
     setLog("");
     try {
@@ -176,6 +177,16 @@ export default function App() {
       setLog(String(e));
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** Paralelo acotado: no pone busy global (Terminal, Adminer, abrir sitio). */
+  async function runLight(fn: () => Promise<unknown>) {
+    try {
+      const out = await fn();
+      if (typeof out === "string" && out) setLog(out);
+    } catch (e) {
+      setLog(String(e));
     }
   }
 
@@ -308,14 +319,14 @@ export default function App() {
           <button
             className="go"
             disabled={!!busy}
-            onClick={() => run("start", () => invoke("start_all"))}
+            onClick={() => runHeavy("start", () => invoke("start_all"))}
           >
             Start All
           </button>
           <button
             className="stop"
             disabled={!!busy}
-            onClick={() => run("stop", () => invoke("stop_all"))}
+            onClick={() => runHeavy("stop", () => invoke("stop_all"))}
           >
             Stop All
           </button>
@@ -358,11 +369,21 @@ export default function App() {
                   </small>
                 </div>
                 {s.status === "running" ? (
-                  <button onClick={() => run(s.id, () => invoke("stop_service", { id: s.id }))}>
+                  <button
+                    disabled={!!busy}
+                    onClick={() =>
+                      runHeavy(s.id, () => invoke("stop_service", { id: s.id }))
+                    }
+                  >
                     stop
                   </button>
                 ) : (
-                  <button onClick={() => run(s.id, () => invoke("start_service", { id: s.id }))}>
+                  <button
+                    disabled={!!busy}
+                    onClick={() =>
+                      runHeavy(s.id, () => invoke("start_service", { id: s.id }))
+                    }
+                  >
                     start
                   </button>
                 )}
@@ -381,7 +402,7 @@ export default function App() {
               type="button"
               disabled={!!busy}
               title="Reescribe etc/nginx/sites (Laravel → public/)"
-              onClick={() => run("vhosts", () => invoke("regenerate_vhosts"))}
+              onClick={() => runHeavy("vhosts", () => invoke("regenerate_vhosts"))}
             >
               Regenerar vhosts
             </button>
@@ -399,10 +420,9 @@ export default function App() {
                   <button
                     type="button"
                     className="mini"
-                    disabled={!!busy}
                     title="Editar vhost en bloc de notas"
                     onClick={() =>
-                      run("vhost", () => invoke("open_site_vhost", { name: s.name }))
+                      runLight(() => invoke("open_site_vhost", { name: s.name }))
                     }
                   >
                     vhost
@@ -418,7 +438,7 @@ export default function App() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!name.trim()) return;
-              run("create", () =>
+              runHeavy("create", () =>
                 invoke("create_site", { kind, name: name.trim().toLowerCase() }),
               );
             }}
@@ -433,7 +453,9 @@ export default function App() {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <button type="submit">Crear</button>
+            <button type="submit" disabled={!!busy}>
+              Crear
+            </button>
           </form>
         </section>
         <section className="panel">
@@ -478,14 +500,14 @@ export default function App() {
         <button
           type="button"
           title="Abre cmd/Terminal con PATH de DevKit (php, composer, mysql…)"
-          onClick={() => run("term", () => invoke("open_terminal"))}
+          onClick={() => runLight(() => invoke("open_terminal"))}
         >
           Terminal
         </button>
         <button
           type="button"
           onClick={() =>
-            run("adminer", async () => {
+            runLight(async () => {
               const url = await invoke<string>("adminer_url");
               await invoke("open_in_browser", { url });
               return url;
@@ -500,7 +522,6 @@ export default function App() {
             className={moreOpen ? "tools-more-btn open" : "tools-more-btn"}
             aria-expanded={moreOpen}
             aria-haspopup="menu"
-            disabled={!!busy}
             onClick={() => setMoreOpen((o) => !o)}
           >
             Más…
@@ -511,7 +532,6 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
-                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
                   openAppModal();
@@ -524,7 +544,6 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
-                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
                   openDbModal();
@@ -542,7 +561,7 @@ export default function App() {
                   aria-label="Versión de PHP"
                   onChange={(e) => {
                     setMoreOpen(false);
-                    run("php", () => invoke("use_php", { version: e.target.value }));
+                    runHeavy("php", () => invoke("use_php", { version: e.target.value }));
                   }}
                 >
                   {php.map((v) => (
@@ -557,7 +576,6 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
-                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
                   openExtModal();
@@ -573,7 +591,7 @@ export default function App() {
                 title={`Abrir http://127.0.0.1:${httpPort}/`}
                 onClick={() => {
                   setMoreOpen(false);
-                  run("web", async () => {
+                  runLight(async () => {
                     const url = await invoke<string>("default_url");
                     await invoke("open_in_browser", { url });
                     return url;
@@ -585,9 +603,10 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
+                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
-                  run("ports", () => invoke("check_ports"));
+                  runHeavy("ports", () => invoke("check_ports"));
                 }}
               >
                 Revisar puertos
@@ -595,7 +614,6 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
-                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
                   openPortsModal();
@@ -610,7 +628,7 @@ export default function App() {
                 title="Solo actualiza el bloque # BEGIN DEVKIT. Puede pedir UAC."
                 onClick={() => {
                   setMoreOpen(false);
-                  run("hosts", () => invoke("ensure_hosts"));
+                  runHeavy("hosts", () => invoke("ensure_hosts"));
                 }}
               >
                 Actualizar hosts
@@ -620,9 +638,10 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
+                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
-                  run("ssl", () => invoke("enable_ssl"));
+                  runHeavy("ssl", () => invoke("enable_ssl"));
                 }}
               >
                 SSL mkcert
@@ -630,9 +649,10 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
+                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
-                  run("pack", () => invoke("pack_portable"));
+                  runHeavy("pack", () => invoke("pack_portable"));
                 }}
               >
                 Zip portable
@@ -640,9 +660,10 @@ export default function App() {
               <button
                 type="button"
                 role="menuitem"
+                disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
-                  run("setup", () => invoke("setup_stack", { full: true }));
+                  runHeavy("setup", () => invoke("setup_stack", { full: true }));
                 }}
               >
                 Setup completo
