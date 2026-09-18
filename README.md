@@ -46,3 +46,19 @@ cd app
 npm install
 npm run tauri dev
 ```
+
+Para exe de producción: `cd app && npm run tauri build`.
+
+## Historias de uso (manual + smoke)
+
+Ver [docs/historias-uso.md](docs/historias-uso.md).
+
+```powershell
+# Las 3 historias con la CLI
+.\scripts\smoke\Invoke-SmokeStories.ps1 -Story All
+
+# Solo arranque / Laravel (conserva el sitio) / parada
+.\scripts\smoke\Invoke-SmokeStories.ps1 -Story Start
+.\scripts\smoke\Invoke-SmokeStories.ps1 -Story Laravel -KeepSite
+.\scripts\smoke\Invoke-SmokeStories.ps1 -Story Stop
+```
