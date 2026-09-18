@@ -24,7 +24,10 @@ pub fn render_main(paths: &Paths, cfg: &AppConfig, sites: &[Site]) -> Result<Str
         ssl_certificate {cert};
         ssl_certificate_key {key};
         root {www_default};
-        include {sites_dir}/_ssl_common.conf;
+        index index.php index.html;
+        location / {{
+            try_files $uri $uri/ /index.php?$query_string;
+        }}
         {php_loc}
     }}
 "#,
@@ -34,7 +37,6 @@ pub fn render_main(paths: &Paths, cfg: &AppConfig, sites: &[Site]) -> Result<Str
             cert = paths.posix(&paths.ssl_cert()),
             key = paths.posix(&paths.ssl_key()),
             www_default = www_default,
-            sites_dir = sites_dir,
             php_loc = php_location(&php),
         )
     } else {
