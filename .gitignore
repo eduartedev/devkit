@@ -25,6 +25,7 @@
 /etc/mysql/my.ini
 /etc/redis/redis.conf
 /etc/devkit/secrets/
+/etc/devkit/config.toml
 /etc/ssl/*.pem
 /etc/ssl/*.key
 /www/**
