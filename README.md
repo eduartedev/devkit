@@ -35,8 +35,11 @@ Tras el build: `C:\DevKit\target\release\devkit.exe`
 - `devkit pack`
 - `devkit terminal`
 - `devkit db status` / `devkit db sync` (alinea root sin contraseña)
+- `devkit logs list` / `tail` / `search` (errores PHP/Nginx y logs bajo www/)
 
 Config local: copia `etc/devkit/config.example.toml` → `etc/devkit/config.toml` (no va a git).
+
+MCP opcional (Cursor/Claude, apagado por defecto): [docs/mcp-logs.md](docs/mcp-logs.md).
 
 ## Seguridad
 

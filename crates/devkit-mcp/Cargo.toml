@@ -1,0 +1,17 @@
+[package]
+name = "devkit-mcp"
+version.workspace = true
+edition.workspace = true
+description = "MCP opcional de DevKit (logs) para Cursor/Claude — no arranca con el stack"
+
+[[bin]]
+name = "devkit-mcp"
+path = "src/main.rs"
+
+[dependencies]
+devkit-core = { path = "../devkit-core" }
+rmcp = { version = "0.16", features = ["server", "transport-io", "macros", "schemars"] }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
