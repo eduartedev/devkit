@@ -55,6 +55,8 @@ events {{
 http {{
     include {mime};
     default_type application/octet-stream;
+    # Hosts largos (p. ej. smoke-laravel-<ticks>.test) necesitan bucket > 32.
+    server_names_hash_bucket_size 128;
     access_log {logs}/nginx-access.log;
     sendfile off;
     keepalive_timeout 65;
@@ -324,6 +326,7 @@ mod tests {
         let html = render_main(&paths, &cfg(), &[]).unwrap();
         assert!(html.contains("listen 127.0.0.1:8080"));
         assert!(!html.contains("0.0.0.0"));
+        assert!(html.contains("server_names_hash_bucket_size 128"));
         assert!(assert_config_localhost_only(&html).is_ok());
     }
 
