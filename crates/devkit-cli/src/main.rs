@@ -52,6 +52,11 @@ enum Commands {
     },
     /// Terminal con PATH de DevKit
     Terminal,
+    /// Credenciales locales de MariaDB
+    Db {
+        #[command(subcommand)]
+        cmd: DbCmd,
+    },
     #[command(hide = true)]
     DnsServe,
 }
@@ -60,6 +65,14 @@ enum Commands {
 enum PhpCmd {
     List,
     Use { version: String },
+}
+
+#[derive(Subcommand)]
+enum DbCmd {
+    /// Muestra usuario y si hay contraseña (sin revelarla)
+    Status,
+    /// Alinea a root sin contraseña (default local) y aplica si MariaDB está arriba
+    Sync,
 }
 
 fn main() -> ExitCode {
@@ -160,6 +173,18 @@ fn run() -> devkit_core::Result<()> {
         Commands::Ssl => println!("{}", kit.enable_ssl()?),
         Commands::Pack { out } => println!("{}", kit.pack(out)?.display()),
         Commands::Terminal => kit.open_terminal()?,
+        Commands::Db { cmd } => match cmd {
+            DbCmd::Status => {
+                let c = kit.db_credentials()?;
+                let pwd = if c.password.is_empty() {
+                    "vacía"
+                } else {
+                    "definida"
+                };
+                println!("MariaDB local: usuario={} contraseña={}", c.user, pwd);
+            }
+            DbCmd::Sync => println!("{}", kit.align_mysql_local_default()?),
+        },
         Commands::DnsServe => {
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let handle = devkit_core::dns::spawn(stop.clone())?;

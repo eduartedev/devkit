@@ -10,7 +10,10 @@ use crate::nginx;
 use crate::pack;
 use crate::paths::{AppConfig, Paths};
 use crate::php::{write_mysql_ini, write_php_ini, write_redis_conf};
-use crate::secrets::{mysql_credentials, redis_password, DbCredentials};
+use crate::secrets::{
+    heal_mysql_secret_toward_empty, local_default_mysql_credentials, mysql_credentials,
+    redis_password, write_mysql_credentials, DbCredentials,
+};
 use crate::setup::{list_php_versions, log_setup, run_setup};
 use crate::site::scan_sites;
 use crate::ssl;
@@ -343,9 +346,61 @@ impl DevKit {
     }
 
     fn set_mysql_password_if_needed(&self) -> Result<()> {
-        // Alinea el servidor con los secretos: vacío = sin password (default).
+        // Alinea el servidor con los secretos; si hay drift hacia root vacío, sana el secreto.
         let creds = mysql_credentials(&self.paths)?;
+        if self.mysql_ping(&creds.user, &creds.password) {
+            return Ok(());
+        }
+        let empty_ok = self.mysql_ping("root", "");
+        if heal_mysql_secret_toward_empty(&self.paths, false, empty_ok)? {
+            return Ok(());
+        }
         self.apply_mysql_credentials(&creds, None)
+    }
+
+    fn mysql_ping(&self, user: &str, password: &str) -> bool {
+        let admin = self.paths.mysqladmin();
+        if !admin.exists() {
+            return false;
+        }
+        if !crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
+            return false;
+        }
+        let port = self.config.mysql_port.to_string();
+        let mut args = crate::secrets::mysql_cli_auth_args(user, password);
+        args.extend([
+            "-h".into(),
+            "127.0.0.1".into(),
+            "-P".into(),
+            port,
+            "ping".into(),
+        ]);
+        let _guard = crate::win_spawn::StdioInheritGuard::clear();
+        let ok = Command::new(&admin)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        drop(_guard);
+        ok
+    }
+
+    /// Fuerza secreto y servidor a `root` sin contraseña (default local).
+    pub fn align_mysql_local_default(&mut self) -> Result<String> {
+        let previous = mysql_credentials(&self.paths).ok();
+        let desired = local_default_mysql_credentials();
+        write_mysql_credentials(&self.paths, &desired)?;
+        write_mysql_ini(&self.paths, &self.config)?;
+        if !crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
+            return Ok(
+                "secretos alineados: root sin contraseña (MariaDB no está en marcha)".into(),
+            );
+        }
+        self.apply_mysql_credentials(&desired, previous.as_ref())?;
+        Ok("MariaDB alineada: root sin contraseña".into())
     }
 
     /// Intenta autenticar y, si hace falta, cambiar la contraseña desde `previous`.
@@ -363,25 +418,7 @@ impl DevKit {
         }
 
         let port = self.config.mysql_port.to_string();
-        let ping_ok = |user: &str, password: &str| -> bool {
-            let mut args = crate::secrets::mysql_cli_auth_args(user, password);
-            args.extend([
-                "-h".into(),
-                "127.0.0.1".into(),
-                "-P".into(),
-                port.clone(),
-                "ping".into(),
-            ]);
-            Command::new(&admin)
-                .args(&args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        };
-
-        if ping_ok(&desired.user, &desired.password) {
+        if self.mysql_ping(&desired.user, &desired.password) {
             return Ok(());
         }
 
@@ -398,7 +435,7 @@ impl DevKit {
 
         let mut authed: Option<(String, String)> = None;
         for (u, p) in attempts {
-            if ping_ok(&u, &p) {
+            if self.mysql_ping(&u, &p) {
                 authed = Some((u, p));
                 break;
             }
@@ -425,11 +462,14 @@ impl DevKit {
         ]);
         // mysqladmin password aplica al usuario de -u; si desired != admin_user ya lo manejamos arriba.
         if desired.user == admin_user {
+            let _guard = crate::win_spawn::StdioInheritGuard::clear();
             let status = Command::new(&admin)
                 .args(&args)
+                .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()?;
+            drop(_guard);
             if !status.success() {
                 return Err(Error::msg(
                     "mysqladmin no pudo cambiar la contraseña de MariaDB",
@@ -437,7 +477,7 @@ impl DevKit {
             }
         }
 
-        if !ping_ok(&desired.user, &desired.password) {
+        if !self.mysql_ping(&desired.user, &desired.password) {
             return Err(Error::msg(
                 "credenciales guardadas pero MariaDB no acepta el nuevo login",
             ));
@@ -655,7 +695,9 @@ impl DevKit {
             }
         }
         if crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
-            let _ = self.set_mysql_password_if_needed();
+            if let Err(e) = self.set_mysql_password_if_needed() {
+                warnings.push(format!("MariaDB credenciales: {e}"));
+            }
         }
         eprintln!("devkit: listo");
         let mut st = self.status()?;
@@ -698,7 +740,12 @@ impl DevKit {
             .ok_or_else(|| Error::msg(format!("servicio desconocido: {id}")))?;
         let snap = self.supervisor.start(spec, detach)?;
         if id == "mariadb" && snap.status == ServiceStatus::Running {
-            let _ = self.set_mysql_password_if_needed();
+            if let Err(e) = self.set_mysql_password_if_needed() {
+                return Ok(ServiceSnapshot {
+                    detail: format!("arrancó; credenciales: {e}"),
+                    ..snap
+                });
+            }
         }
         Ok(snap)
     }

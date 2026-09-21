@@ -122,6 +122,36 @@ pub fn write_mysql_credentials(paths: &Paths, creds: &DbCredentials) -> Result<(
     Ok(())
 }
 
+/// Credenciales locales por defecto: `root` sin contraseña (estilo Laragon).
+pub fn local_default_mysql_credentials() -> DbCredentials {
+    DbCredentials {
+        user: "root".into(),
+        password: String::new(),
+    }
+}
+
+/// Si el secreto no autentica pero el servidor acepta root vacío, reescribe el secreto.
+/// Devuelve `true` si sanó el archivo.
+pub fn heal_mysql_secret_toward_empty(
+    paths: &Paths,
+    secret_authenticates: bool,
+    empty_root_authenticates: bool,
+) -> Result<bool> {
+    if secret_authenticates {
+        return Ok(false);
+    }
+    if !empty_root_authenticates {
+        return Ok(false);
+    }
+    let fixed = local_default_mysql_credentials();
+    let current = mysql_credentials(paths)?;
+    if current == fixed {
+        return Ok(false);
+    }
+    write_mysql_credentials(paths, &fixed)?;
+    Ok(true)
+}
+
 pub fn mysql_password(paths: &Paths) -> Result<String> {
     Ok(mysql_credentials(paths)?.password)
 }
@@ -216,5 +246,31 @@ mod tests {
         let c = mysql_credentials(&paths).unwrap();
         assert_eq!(c.password, "already-set");
         assert_eq!(c.user, "root");
+    }
+
+    #[test]
+    fn heal_rewrites_drifted_secret_when_empty_root_works() {
+        let d = tempdir().unwrap();
+        let paths = Paths::from_root(d.path().to_path_buf());
+        write_mysql_credentials(
+            &paths,
+            &DbCredentials {
+                user: "root".into(),
+                password: "stale".into(),
+            },
+        )
+        .unwrap();
+        assert!(heal_mysql_secret_toward_empty(&paths, false, true).unwrap());
+        let c = mysql_credentials(&paths).unwrap();
+        assert_eq!(c, local_default_mysql_credentials());
+    }
+
+    #[test]
+    fn heal_noop_when_secret_already_ok() {
+        let d = tempdir().unwrap();
+        let paths = Paths::from_root(d.path().to_path_buf());
+        write_mysql_credentials(&paths, &local_default_mysql_credentials()).unwrap();
+        assert!(!heal_mysql_secret_toward_empty(&paths, true, true).unwrap());
+        assert!(!heal_mysql_secret_toward_empty(&paths, false, false).unwrap());
     }
 }

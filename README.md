@@ -34,10 +34,13 @@ Tras el build: `C:\DevKit\target\release\devkit.exe`
 - `devkit ssl`
 - `devkit pack`
 - `devkit terminal`
+- `devkit db status` / `devkit db sync` (alinea root sin contraseña)
+
+Config local: copia `etc/devkit/config.example.toml` → `etc/devkit/config.toml` (no va a git).
 
 ## Seguridad
 
-Servicios atados a **127.0.0.1**. Password root de MariaDB en `etc/devkit/secrets/` (ACL restringida). No ejecutes proyectos de `www` como administrador.
+Servicios atados a **127.0.0.1**. Password root de MariaDB en `etc/devkit/secrets/` (ACL restringida; por defecto vacía). No ejecutes proyectos de `www` como administrador.
 
 ## Panel
 
