@@ -57,6 +57,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: DbCmd,
     },
+    /// Leer logs del kit / proyectos (php_error, nginx, Laravel…)
+    Logs {
+        #[command(subcommand)]
+        cmd: LogsCmd,
+    },
     #[command(hide = true)]
     DnsServe,
 }
@@ -73,6 +78,28 @@ enum DbCmd {
     Status,
     /// Alinea a root sin contraseña (default local) y aplica si MariaDB está arriba
     Sync,
+}
+
+#[derive(Subcommand)]
+enum LogsCmd {
+    /// Lista logs del kit y, por defecto, hints de frameworks en www/
+    List {
+        #[arg(long)]
+        kit_only: bool,
+    },
+    /// Últimas líneas (`php`, `nginx-error`, o ruta bajo www/)
+    Tail {
+        id: String,
+        #[arg(long, default_value_t = 80)]
+        lines: usize,
+    },
+    /// Busca texto en un log
+    Search {
+        id: String,
+        query: String,
+        #[arg(long, default_value_t = 50)]
+        max: usize,
+    },
 }
 
 fn main() -> ExitCode {
@@ -184,6 +211,37 @@ fn run() -> devkit_core::Result<()> {
                 println!("MariaDB local: usuario={} contraseña={}", c.user, pwd);
             }
             DbCmd::Sync => println!("{}", kit.align_mysql_local_default()?),
+        },
+        Commands::Logs { cmd } => match cmd {
+            LogsCmd::List { kit_only } => {
+                for e in kit.list_logs(!kit_only)? {
+                    let mark = if e.exists { "ok" } else { "-" };
+                    println!(
+                        "[{mark}] {:<40} {:>8} B  {}",
+                        e.id,
+                        e.size_bytes,
+                        e.path.display()
+                    );
+                }
+            }
+            LogsCmd::Tail { id, lines } => {
+                let text = kit.tail_log(&id, Some(lines))?;
+                if text.is_empty() {
+                    println!("(vacío o inexistente: {id})");
+                } else {
+                    println!("{text}");
+                }
+            }
+            LogsCmd::Search { id, query, max } => {
+                let hits = kit.search_log(&id, &query, Some(max))?;
+                if hits.is_empty() {
+                    println!("sin coincidencias");
+                } else {
+                    for h in hits {
+                        println!("{h}");
+                    }
+                }
+            }
         },
         Commands::DnsServe => {
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

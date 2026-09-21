@@ -167,6 +167,8 @@ impl DevKit {
                 format!("{}:{}", self.config.bind, self.config.mailpit_ui),
                 "--smtp".into(),
                 format!("{}:{}", self.config.bind, self.config.mailpit_smtp),
+                "--log-file".into(),
+                self.paths.posix(&self.paths.logs.join("mailpit.log")),
             ],
             env: vec![],
             cwd: Some(self.paths.bin.join("mailpit")),
@@ -179,7 +181,7 @@ impl DevKit {
 
     pub fn reload_sites(&mut self) -> Result<Vec<crate::model::Site>> {
         write_mysql_ini(&self.paths, &self.config)?;
-        write_php_ini(&self.paths.php_dir(&self.config.php_version), &self.config)?;
+        write_php_ini(&self.paths, &self.paths.php_dir(&self.config.php_version), &self.config)?;
         if self.paths.redis_password_file().exists() || self.paths.redis_server().exists() {
             let pw = redis_password(&self.paths)?;
             write_redis_conf(&self.paths, &self.config, &pw)?;
@@ -795,7 +797,7 @@ impl DevKit {
         }
         self.config.php_version = version.to_string();
         self.config.save(&self.paths.config_file())?;
-        write_php_ini(&self.paths.php_dir(version), &self.config)?;
+        write_php_ini(&self.paths, &self.paths.php_dir(version), &self.config)?;
         self.reload_sites()?;
         if was_running {
             self.start_service("php", true)?;
@@ -875,7 +877,7 @@ impl DevKit {
         let validated = crate::php::validate_extension_names(&names, &dir)?;
         self.config.php_extensions = validated.clone();
         self.config.save(&self.paths.config_file())?;
-        crate::php::write_php_ini(&dir, &self.config)?;
+        crate::php::write_php_ini(&self.paths, &dir, &self.config)?;
         // Reinicia PHP si estaba en marcha para cargar extensiones.
         let was = matches!(
             self.supervisor.snapshot(&self.spec_php()?).status,
@@ -902,6 +904,25 @@ impl DevKit {
 
     pub fn pack(&self, out: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
         pack::pack(&self.paths, out)
+    }
+
+    pub fn list_logs(&self, include_projects: bool) -> Result<Vec<crate::logs::LogEntry>> {
+        crate::logs::list_logs(&self.paths, include_projects)
+    }
+
+    pub fn tail_log(&self, id_or_rel: &str, lines: Option<usize>) -> Result<String> {
+        let path = crate::logs::resolve_log_path(&self.paths, id_or_rel)?;
+        crate::logs::tail_lines(&path, crate::logs::clamp_lines(lines))
+    }
+
+    pub fn search_log(
+        &self,
+        id_or_rel: &str,
+        query: &str,
+        max_matches: Option<usize>,
+    ) -> Result<Vec<String>> {
+        let path = crate::logs::resolve_log_path(&self.paths, id_or_rel)?;
+        crate::logs::search_lines(&path, query, max_matches.unwrap_or(50))
     }
 
     pub fn open_terminal(&self) -> Result<()> {

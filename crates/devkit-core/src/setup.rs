@@ -90,7 +90,7 @@ fn install_nginx(paths: &Paths, report: &mut SetupReport) -> Result<()> {
 fn install_php(paths: &Paths, major: &str, cfg: &AppConfig, report: &mut SetupReport) -> Result<()> {
     let dir = paths.php_dir(major);
     if paths.php_cgi(major).exists() {
-        write_php_ini(&dir, cfg)?;
+        write_php_ini(paths, &dir, cfg)?;
         report.push(format!("php {major}: ya instalado"));
         return Ok(());
     }
@@ -100,7 +100,7 @@ fn install_php(paths: &Paths, major: &str, cfg: &AppConfig, report: &mut SetupRe
     report.push(format!("php {ver}: descargando NTS…"));
     download_verified(&url, &zip, Some(&sha))?;
     unzip_safe(&zip, &dir)?;
-    write_php_ini(&dir, cfg)?;
+    write_php_ini(paths, &dir, cfg)?;
     if !paths.php_cgi(major).exists() {
         return Err(Error::msg("php-cgi.exe no apareció"));
     }

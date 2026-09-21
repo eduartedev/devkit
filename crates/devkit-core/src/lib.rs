@@ -9,6 +9,7 @@ pub mod error;
 pub mod health;
 pub mod hosts;
 pub mod kit;
+pub mod logs;
 pub mod nginx;
 pub mod pack;
 pub mod paths;

@@ -139,6 +139,7 @@ pub fn build_devkit_php_block(
     php_dir: &Path,
     cfg: &AppConfig,
     extensions: &[String],
+    error_log_posix: &str,
 ) -> String {
     let ext = php_dir.join("ext");
     let ext_posix = ext.to_string_lossy().replace('\\', "/");
@@ -156,7 +157,9 @@ pub fn build_devkit_php_block(
         "post_max_size = 64M".into(),
         "memory_limit = 256M".into(),
         "display_errors = On".into(),
+        "log_errors = On".into(),
         "error_reporting = E_ALL".into(),
+        format!("error_log = \"{error_log_posix}\""),
     ];
     let mut seen = BTreeSet::new();
     for name in extensions {
@@ -172,7 +175,8 @@ pub fn build_devkit_php_block(
     format!("\r\n{}\r\n", lines.join("\r\n"))
 }
 
-pub fn write_php_ini(php_dir: &Path, cfg: &AppConfig) -> Result<()> {
+pub fn write_php_ini(paths: &Paths, php_dir: &Path, cfg: &AppConfig) -> Result<()> {
+    fs::create_dir_all(&paths.logs)?;
     let dest = php_dir.join("php.ini");
     let src = if php_dir.join("php.ini-development").exists() {
         php_dir.join("php.ini-development")
@@ -192,8 +196,9 @@ pub fn write_php_ini(php_dir: &Path, cfg: &AppConfig) -> Result<()> {
     } else {
         cfg.php_extensions.clone()
     };
+    let error_log = paths.posix(&paths.logs.join("php_error.log"));
     let mut body = cleaned.trim_end().to_string();
-    body.push_str(&build_devkit_php_block(php_dir, cfg, &exts));
+    body.push_str(&build_devkit_php_block(php_dir, cfg, &exts, &error_log));
     fs::write(dest, body)?;
     Ok(())
 }
@@ -245,8 +250,10 @@ pub fn validate_extension_names(names: &[String], php_dir: &Path) -> Result<Vec<
 }
 
 pub fn write_mysql_ini(paths: &Paths, cfg: &AppConfig) -> Result<()> {
+    fs::create_dir_all(&paths.logs)?;
     let datadir = paths.posix(&paths.data.join("mysql"));
     let basedir = paths.posix(&paths.bin.join("mariadb"));
+    let error_log = paths.posix(&paths.logs.join("mariadb-error.log"));
     let creds = crate::secrets::mysql_credentials(paths)?;
     let password_line = if creds.password.is_empty() {
         String::new()
@@ -260,6 +267,7 @@ datadir={datadir}
 port={port}
 bind-address={bind}
 skip-networking=0
+log-error={error_log}
 innodb_buffer_pool_size=128M
 character-set-server=utf8mb4
 collation-server=utf8mb4_unicode_ci
@@ -274,6 +282,7 @@ user={user}
         port = cfg.mysql_port,
         user = creds.user,
         password_line = password_line,
+        error_log = error_log,
     );
     crate::bind::assert_config_localhost_only(&body)?;
     fs::write(paths.mysql_cnf(), body)?;
@@ -281,7 +290,9 @@ user={user}
 }
 
 pub fn write_redis_conf(paths: &Paths, cfg: &AppConfig, password: &str) -> Result<()> {
+    fs::create_dir_all(&paths.logs)?;
     let dir = paths.posix(&paths.data.join("redis"));
+    let logfile = paths.posix(&paths.logs.join("redis.log"));
     let body = format!(
         r#"bind {bind}
 protected-mode yes
@@ -289,6 +300,8 @@ port {port}
 requirepass {password}
 dir {dir}
 dbfilename dump.rdb
+logfile {logfile}
+loglevel notice
 save ""
 rename-command FLUSHALL ""
 rename-command FLUSHDB ""
@@ -297,6 +310,7 @@ rename-command CONFIG ""
         bind = cfg.bind,
         port = cfg.redis_port,
         password = password,
+        logfile = logfile,
     );
     crate::bind::assert_config_localhost_only(&body)?;
     fs::write(paths.redis_conf(), body)?;
@@ -336,8 +350,8 @@ header('X-Powered-By: DevKit');
     Ok(())
 }
 
-pub fn enable_php_extensions_safe(php_dir: &Path) -> Result<()> {
-    write_php_ini(php_dir, &AppConfig::default())
+pub fn enable_php_extensions_safe(paths: &Paths, php_dir: &Path) -> Result<()> {
+    write_php_ini(paths, php_dir, &AppConfig::default())
 }
 
 pub fn php_ini_path(php_dir: &Path) -> PathBuf {
@@ -376,8 +390,33 @@ mod tests {
         assert!(!cleaned.contains("extension=old"));
         assert!(cleaned.contains("[PHP]"));
         let cfg = AppConfig::default();
-        let block = build_devkit_php_block(&php_dir, &cfg, &["gd".into()]);
+        let block = build_devkit_php_block(
+            &php_dir,
+            &cfg,
+            &["gd".into()],
+            "C:/DevKit/logs/php_error.log",
+        );
         assert!(block.contains("extension=gd"));
         assert!(block.contains("; DevKit"));
+        assert!(block.contains("error_log = \"C:/DevKit/logs/php_error.log\""));
+        assert!(block.contains("log_errors = On"));
+    }
+
+    #[test]
+    fn mysql_and_redis_log_under_logs_dir() {
+        let dir = tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().to_path_buf());
+        fs::create_dir_all(paths.secrets_dir()).unwrap();
+        fs::create_dir_all(paths.etc.join("mysql")).unwrap();
+        fs::create_dir_all(paths.etc.join("redis")).unwrap();
+        let cfg = AppConfig::default();
+        write_mysql_ini(&paths, &cfg).unwrap();
+        let my = fs::read_to_string(paths.mysql_cnf()).unwrap();
+        assert!(my.contains("log-error="));
+        assert!(my.contains("mariadb-error.log"));
+        write_redis_conf(&paths, &cfg, "secret").unwrap();
+        let rd = fs::read_to_string(paths.redis_conf()).unwrap();
+        assert!(rd.contains("logfile "));
+        assert!(rd.contains("redis.log"));
     }
 }
