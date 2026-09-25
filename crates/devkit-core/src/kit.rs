@@ -357,7 +357,10 @@ impl DevKit {
         if heal_mysql_secret_toward_empty(&self.paths, false, empty_ok)? {
             return Ok(());
         }
-        self.apply_mysql_credentials(&creds, None)
+        if self.apply_mysql_credentials(&creds, None).is_ok() {
+            return Ok(());
+        }
+        self.recover_mysql_with_skip_grants(&creds, true)
     }
 
     fn mysql_ping(&self, user: &str, password: &str) -> bool {
@@ -397,12 +400,114 @@ impl DevKit {
         write_mysql_credentials(&self.paths, &desired)?;
         write_mysql_ini(&self.paths, &self.config)?;
         if !crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
-            return Ok(
-                "secretos alineados: root sin contraseña (MariaDB no está en marcha)".into(),
-            );
+            self.recover_mysql_with_skip_grants(&desired, true)?;
+            return Ok("MariaDB recuperada y arrancada: root sin contraseña".into());
         }
-        self.apply_mysql_credentials(&desired, previous.as_ref())?;
-        Ok("MariaDB alineada: root sin contraseña".into())
+        match self.apply_mysql_credentials(&desired, previous.as_ref()) {
+            Ok(()) => Ok("MariaDB alineada: root sin contraseña".into()),
+            Err(_) => {
+                self.recover_mysql_with_skip_grants(&desired, true)?;
+                Ok("MariaDB recuperada: root sin contraseña (reinicio local)".into())
+            }
+        }
+    }
+
+    /// Si ninguna clave conocida entra, reinicia solo el mysqld de DevKit en 127.0.0.1
+    /// con `--skip-grant-tables`, fija la contraseña y lo deja otra vez en marcha.
+    fn recover_mysql_with_skip_grants(&self, desired: &DbCredentials, restart: bool) -> Result<()> {
+        crate::bind::require_localhost(&self.config.bind)?;
+        let spec = self.spec_mariadb()?;
+        let _ = self.supervisor.stop(&spec);
+        let _ = crate::health::wait_until_closed(&self.config.bind, self.config.mysql_port, 40);
+        if crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
+            return Err(Error::msg(
+                "el puerto MariaDB de DevKit sigue ocupado; no se tocó otro servidor",
+            ));
+        }
+
+        let mut cmd = Command::new(self.paths.mysqld());
+        cmd.args([
+            format!(
+                "--defaults-file={}",
+                self.paths.posix(&self.paths.mysql_cnf())
+            ),
+            "--skip-grant-tables".into(),
+            format!("--bind-address={}", self.config.bind),
+            "--console".into(),
+        ])
+        .current_dir(self.paths.bin.join("mariadb"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x0800_0000);
+        }
+        let _guard = crate::win_spawn::StdioInheritGuard::clear();
+        let mut child = cmd.spawn().map_err(|e| {
+            Error::msg(format!("no se pudo arrancar MariaDB en recuperación: {e}"))
+        })?;
+        drop(_guard);
+
+        let opened = crate::health::wait_until_open(&self.config.bind, self.config.mysql_port, 80);
+        let applied = if opened {
+            self.exec_mysql_sql(&mysql_force_password_sql(desired))
+        } else {
+            Err(Error::msg(
+                "MariaDB en recuperación no abrió el puerto local",
+            ))
+        };
+
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = self.supervisor.stop(&spec);
+        let _ = crate::health::wait_until_closed(&self.config.bind, self.config.mysql_port, 40);
+        applied?;
+
+        if restart {
+            self.supervisor.start(spec, true)?;
+            if !self.mysql_ping(&desired.user, &desired.password) {
+                return Err(Error::msg(
+                    "MariaDB reinició pero sigue sin aceptar las credenciales locales",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_mysql_sql(&self, sql: &str) -> Result<()> {
+        let mysql = self.paths.bin.join("mariadb").join("bin").join("mysql.exe");
+        let mysql = if mysql.exists() {
+            mysql
+        } else {
+            self.paths.bin.join("mariadb").join("bin").join("mysql")
+        };
+        let _guard = crate::win_spawn::StdioInheritGuard::clear();
+        let status = Command::new(&mysql)
+            .args([
+                "-h",
+                "127.0.0.1",
+                "-P",
+                &self.config.mysql_port.to_string(),
+                "-u",
+                "root",
+                "--protocol=TCP",
+                "--skip-password",
+                "-e",
+                sql,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| Error::msg(format!("mysql de recuperación falló: {e}")))?;
+        drop(_guard);
+        if !status.success() {
+            return Err(Error::msg(
+                "no se pudo fijar la contraseña de MariaDB en modo recuperación",
+            ));
+        }
+        Ok(())
     }
 
     /// Intenta autenticar y, si hace falta, cambiar la contraseña desde `previous`.
@@ -547,23 +652,21 @@ impl DevKit {
         crate::secrets::write_mysql_credentials(&self.paths, &creds)?;
         write_mysql_ini(&self.paths, &self.config)?;
         match self.apply_mysql_credentials(&creds, previous.as_ref()) {
-            Ok(()) => {
-                if creds.password.is_empty() {
-                    Ok(format!(
-                        "credenciales OK: usuario `{}` sin contraseña (local)",
-                        creds.user
-                    ))
-                } else {
-                    Ok(format!(
-                        "credenciales OK: usuario `{}` con contraseña",
-                        creds.user
-                    ))
-                }
+            Err(_) => {
+                self.recover_mysql_with_skip_grants(&creds, true)?;
             }
-            Err(e) => Ok(format!(
-                "secretos y my.cnf guardados; aplicar en servidor: {e}. Arranca MariaDB y vuelve a guardar."
-            )),
+            Ok(()) => {}
         }
+        if creds.password.is_empty() {
+            return Ok(format!(
+                "credenciales OK: usuario `{}` sin contraseña (local)",
+                creds.user
+            ));
+        }
+        Ok(format!(
+            "credenciales OK: usuario `{}` con contraseña",
+            creds.user
+        ))
     }
 
     pub fn check_ports(&self) -> Result<Vec<PortCheck>> {
@@ -963,14 +1066,15 @@ impl DevKit {
         let sites = self.reload_sites()?;
         let _ = self.ensure_hosts();
         Ok(format!(
-            "configuración guardada ({} sitio(s), tld=.{}, junctions={})",
+            "configuración guardada ({} sitio(s), tld=.{}, junctions={}, php timeout={}s)",
             sites.len(),
             self.config.tld,
             if self.config.follow_www_junctions {
                 "sí"
             } else {
                 "no"
-            }
+            },
+            self.config.fastcgi_timeout_secs,
         ))
     }
 
@@ -993,5 +1097,38 @@ impl DevKit {
 
     pub fn default_url(&self) -> String {
         format!("http://{}:{}/", self.config.bind, self.config.http_port)
+    }
+}
+
+fn mysql_force_password_sql(desired: &DbCredentials) -> String {
+    let pwd = desired.password.replace('\'', "''");
+    let user = &desired.user;
+    format!(
+        "FLUSH PRIVILEGES;\
+         ALTER USER 'root'@'localhost' IDENTIFIED BY '{pwd}';\
+         CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '{pwd}';\
+         ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '{pwd}';\
+         GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;\
+         GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;\
+         CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{pwd}';\
+         ALTER USER '{user}'@'localhost' IDENTIFIED BY '{pwd}';\
+         CREATE USER IF NOT EXISTS '{user}'@'127.0.0.1' IDENTIFIED BY '{pwd}';\
+         ALTER USER '{user}'@'127.0.0.1' IDENTIFIED BY '{pwd}';\
+         GRANT ALL PRIVILEGES ON *.* TO '{user}'@'localhost' WITH GRANT OPTION;\
+         GRANT ALL PRIVILEGES ON *.* TO '{user}'@'127.0.0.1' WITH GRANT OPTION;\
+         FLUSH PRIVILEGES;"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_password_sql_uses_empty_secret_for_root() {
+        let sql = mysql_force_password_sql(&local_default_mysql_credentials());
+        assert!(sql.contains("ALTER USER 'root'@'localhost' IDENTIFIED BY '';"));
+        assert!(sql.contains("FLUSH PRIVILEGES;"));
+        assert!(!sql.contains("IDENTIFIED BY 'x'"));
     }
 }

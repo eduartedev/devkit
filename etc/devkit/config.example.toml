@@ -16,6 +16,9 @@ php_version = "8.3"
 ssl = false
 tld = "test"
 follow_www_junctions = true
+# Segundos que Nginx espera a PHP (fastcgi_read_timeout / fastcgi_send_timeout).
+# 60 es el defecto de Nginx. Instaladores largos (Duplicator) suelen necesitar 3600.
+fastcgi_timeout_secs = 60
 php_extensions = [
     "mysqli",
     "pdo_mysql",

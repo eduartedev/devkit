@@ -223,10 +223,20 @@ pub struct AppConfig {
     /// Si true, carpetas en www/ que sean junction/symlink cuentan como sitios.
     #[serde(default = "default_true")]
     pub follow_www_junctions: bool,
+    /// Segundos de `fastcgi_read_timeout` y `fastcgi_send_timeout` en cada `location ~ \.php$`.
+    #[serde(default = "default_fastcgi_timeout")]
+    pub fastcgi_timeout_secs: u64,
 }
 
 fn default_true() -> bool {
     true
+}
+
+pub const FASTCGI_TIMEOUT_MIN: u64 = 1;
+pub const FASTCGI_TIMEOUT_MAX: u64 = 7200;
+
+fn default_fastcgi_timeout() -> u64 {
+    60
 }
 
 fn default_php_extensions() -> Vec<String> {
@@ -265,6 +275,7 @@ impl Default for AppConfig {
             tld: "test".to_string(),
             php_extensions: default_php_extensions(),
             follow_www_junctions: true,
+            fastcgi_timeout_secs: default_fastcgi_timeout(),
         }
     }
 }
@@ -298,6 +309,7 @@ impl AppConfig {
 pub struct AppSettings {
     pub tld: String,
     pub follow_www_junctions: bool,
+    pub fastcgi_timeout_secs: u64,
 }
 
 impl AppSettings {
@@ -305,6 +317,7 @@ impl AppSettings {
         Self {
             tld: cfg.tld.clone(),
             follow_www_junctions: cfg.follow_www_junctions,
+            fastcgi_timeout_secs: cfg.fastcgi_timeout_secs,
         }
     }
 
@@ -327,11 +340,45 @@ impl AppSettings {
         if tld.starts_with('-') || tld.ends_with('-') {
             return Err(Error::msg("TLD no puede empezar o terminar con guion"));
         }
+        if !(FASTCGI_TIMEOUT_MIN..=FASTCGI_TIMEOUT_MAX).contains(&self.fastcgi_timeout_secs) {
+            return Err(Error::msg(format!(
+                "tiempo de espera PHP debe estar entre {FASTCGI_TIMEOUT_MIN} y {FASTCGI_TIMEOUT_MAX} segundos"
+            )));
+        }
         Ok(())
     }
 
     pub fn apply_to(&self, cfg: &mut AppConfig) {
         cfg.tld = self.tld.trim().to_ascii_lowercase();
         cfg.follow_www_junctions = self.follow_www_junctions;
+        cfg.fastcgi_timeout_secs = self.fastcgi_timeout_secs;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_config_without_timeout_stays_at_60() {
+        let raw = toml::to_string(&AppConfig::default()).unwrap();
+        let stripped = raw
+            .lines()
+            .filter(|line| !line.contains("fastcgi_timeout_secs"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cfg: AppConfig = toml::from_str(&stripped).unwrap();
+        assert_eq!(cfg.fastcgi_timeout_secs, 60);
+    }
+
+    #[test]
+    fn timeout_rejects_zero_and_over_max() {
+        let mut settings = AppSettings::from_config(&AppConfig::default());
+        settings.fastcgi_timeout_secs = 0;
+        assert!(settings.validate().is_err());
+        settings.fastcgi_timeout_secs = FASTCGI_TIMEOUT_MAX + 1;
+        assert!(settings.validate().is_err());
+        settings.fastcgi_timeout_secs = 3600;
+        assert!(settings.validate().is_ok());
     }
 }

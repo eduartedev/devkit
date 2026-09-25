@@ -37,7 +37,7 @@ pub fn render_main(paths: &Paths, cfg: &AppConfig, sites: &[Site]) -> Result<Str
             cert = paths.posix(&paths.ssl_cert()),
             key = paths.posix(&paths.ssl_key()),
             www_default = www_default,
-            php_loc = php_location(&php),
+            php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
         )
     } else {
         String::new()
@@ -84,7 +84,7 @@ http {{
         bind = cfg.bind,
         http = cfg.http_port,
         tld = cfg.tld,
-        php_loc = php_location(&php),
+        php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
         ssl_block = ssl_block,
     );
 
@@ -96,12 +96,14 @@ http {{
     Ok(conf)
 }
 
-fn php_location(fastcgi: &str) -> String {
+fn php_location(fastcgi: &str, timeout_secs: u64) -> String {
     format!(
         r#"location ~ \.php$ {{
             try_files $uri =404;
             fastcgi_pass {fastcgi};
             fastcgi_index index.php;
+            fastcgi_read_timeout {timeout_secs};
+            fastcgi_send_timeout {timeout_secs};
             fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
             include fastcgi_params;
         }}"#
@@ -149,7 +151,7 @@ pub fn render_site(cfg: &AppConfig, site: &Site, ssl: bool) -> Result<String> {
             https = cfg.https_port,
             cert = "PLACEHOLDER_CERT",
             key = "PLACEHOLDER_KEY",
-            php_loc = php_location(&php),
+            php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
         )
     } else {
         format!(
@@ -166,7 +168,7 @@ pub fn render_site(cfg: &AppConfig, site: &Site, ssl: bool) -> Result<String> {
 "#,
             bind = cfg.bind,
             http = cfg.http_port,
-            php_loc = php_location(&php),
+            php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
         )
     };
 
@@ -194,7 +196,7 @@ pub fn render_site_http(paths: &Paths, cfg: &AppConfig, site: &Site) -> Result<S
 "#,
         bind = cfg.bind,
         http = cfg.http_port,
-        php_loc = php_location(&php),
+        php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
     );
     if cfg.ssl && paths.ssl_cert().exists() {
         conf.push_str(&format!(
@@ -216,7 +218,7 @@ server {{
             https = cfg.https_port,
             cert = paths.posix(&paths.ssl_cert()),
             key = paths.posix(&paths.ssl_key()),
-            php_loc = php_location(&php),
+            php_loc = php_location(&php, cfg.fastcgi_timeout_secs),
         ));
     }
     assert_config_localhost_only(&conf)?;
@@ -344,7 +346,34 @@ mod tests {
         let conf = render_site_http(&paths, &cfg(), &site).unwrap();
         assert!(conf.contains("server_name blog.test"));
         assert!(conf.contains("listen 127.0.0.1:8080"));
+        assert!(conf.contains("fastcgi_read_timeout 60;"));
+        assert!(conf.contains("fastcgi_send_timeout 60;"));
         assert!(!conf.contains("0.0.0.0"));
+    }
+
+    #[test]
+    fn both_php_locations_use_configured_timeout() {
+        let dir = std::env::temp_dir().join(format!("devkit-nginx-timeout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths = Paths::from_root(dir.clone());
+        std::fs::create_dir_all(paths.ssl_cert().parent().unwrap()).unwrap();
+        std::fs::write(paths.ssl_cert(), b"cert").unwrap();
+        std::fs::write(paths.ssl_key(), b"key").unwrap();
+        let mut cfg = cfg();
+        cfg.ssl = true;
+        cfg.fastcgi_timeout_secs = 3600;
+        let site = Site {
+            name: "pagina".into(),
+            hostname: "pagina.test".into(),
+            root: PathBuf::from(r"C:\DevKit\www\pagina"),
+            php_version: "8.3".into(),
+            ssl: true,
+            url: "https://pagina.test:8443".into(),
+        };
+        let conf = render_site_http(&paths, &cfg, &site).unwrap();
+        assert_eq!(conf.matches("fastcgi_read_timeout 3600;").count(), 2);
+        assert_eq!(conf.matches("fastcgi_send_timeout 3600;").count(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
