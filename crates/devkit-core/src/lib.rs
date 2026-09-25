@@ -10,6 +10,7 @@ pub mod health;
 pub mod hosts;
 pub mod kit;
 pub mod logs;
+pub mod mcp_build;
 pub mod nginx;
 pub mod pack;
 pub mod paths;
@@ -27,6 +28,7 @@ pub mod model;
 
 pub use error::{Error, Result};
 pub use kit::DevKit;
+pub use mcp_build::{build_mcp_release, mcp_exe_info, McpExeInfo};
 pub use model::*;
 pub use paths::{AppConfig, AppSettings, Paths};
 pub use php::PhpExtensionInfo;

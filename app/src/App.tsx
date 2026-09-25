@@ -63,6 +63,7 @@ type PhpExtensionInfo = {
 type AppSettings = {
   tld: string;
   follow_www_junctions: boolean;
+  fastcgi_timeout_secs: number;
 };
 
 type Stack = {
@@ -84,6 +85,28 @@ const PORT_FIELDS: { key: keyof PortsSettings; label: string }[] = [
   { key: "mailpit_ui", label: "Mailpit UI" },
   { key: "mailpit_smtp", label: "Mailpit SMTP" },
 ];
+
+type McpExeInfo = {
+  path: string;
+  exists: boolean;
+  can_build: boolean;
+};
+
+function mcpExe(root: string): string {
+  const base = root.replace(/[\\/]+$/, "");
+  return `${base}\\target\\release\\devkit-mcp.exe`;
+}
+
+function mcpCursorJson(exePath: string): string {
+  const command = exePath.replace(/\\/g, "\\\\");
+  return `{
+  "mcpServers": {
+    "devkit": {
+      "command": "${command}"
+    }
+  }
+}`;
+}
 
 function portBadge(owner: PortOwner): { label: string; cls: string } {
   switch (owner.kind) {
@@ -117,6 +140,8 @@ export default function App() {
   const [extError, setExtError] = useState("");
   const [extFilter, setExtFilter] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [mcpInfo, setMcpInfo] = useState<McpExeInfo | null>(null);
   const [appOpen, setAppOpen] = useState(false);
   const [appDraft, setAppDraft] = useState<AppSettings | null>(null);
   const [appError, setAppError] = useState("");
@@ -516,6 +541,19 @@ export default function App() {
         >
           Adminer
         </button>
+        <button
+          type="button"
+          title="Abre la bandeja de correo de Mailpit"
+          onClick={() =>
+            runLight(async () => {
+              const url = await invoke<string>("mailpit_url");
+              await invoke("open_in_browser", { url });
+              return url;
+            })
+          }
+        >
+          Mailpit
+        </button>
         <div className="tools-more" ref={moreRef}>
           <button
             type="button"
@@ -538,6 +576,19 @@ export default function App() {
                 }}
               >
                 Configuración
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setMcpOpen(true);
+                  void invoke<McpExeInfo>("mcp_exe_status")
+                    .then(setMcpInfo)
+                    .catch(() => setMcpInfo(null));
+                }}
+              >
+                MCP de logs
               </button>
 
               <p className="tools-group">Base de datos</p>
@@ -832,6 +883,41 @@ export default function App() {
               </div>
             </section>
 
+            <section className="settings-section">
+              <h3 className="settings-section-title">PHP</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">Espera de Nginx</span>
+                  <p className="settings-desc">
+                    Segundos que Nginx espera a PHP (<code>fastcgi_read_timeout</code> y{" "}
+                    <code>fastcgi_send_timeout</code>) en los dos bloques{" "}
+                    <code>location ~ \.php$</code>. El defecto es 60. Un instalador largo
+                    (Duplicator) suele necesitar 3600.
+                  </p>
+                </div>
+                <div className="settings-control">
+                  <input
+                    className="settings-timeout"
+                    type="number"
+                    min={1}
+                    max={7200}
+                    step={1}
+                    value={appDraft.fastcgi_timeout_secs}
+                    disabled={!!busy}
+                    aria-label="Segundos de espera de Nginx hacia PHP"
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      setAppDraft((prev) =>
+                        prev && Number.isFinite(n)
+                          ? { ...prev, fastcgi_timeout_secs: Math.trunc(n) }
+                          : prev,
+                      );
+                    }}
+                  />
+                </div>
+              </div>
+            </section>
+
             {appError && <p className="modal-error">{appError}</p>}
             <div className="modal-actions">
               <button type="button" disabled={!!busy} onClick={() => setAppOpen(false)}>
@@ -993,6 +1079,85 @@ export default function App() {
               </button>
               <button type="button" className="go" disabled={!!busy} onClick={saveExt}>
                 Guardar y reiniciar PHP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mcpOpen && (
+        <div className="modal-backdrop" onClick={() => setMcpOpen(false)} role="presentation">
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mcp-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="mcp-modal-title">MCP de logs</h2>
+            <p className="modal-hint">
+              No se enciende con Start. Cursor (u otro cliente) lo lanza cuando lo agregas. Sirve para que el agente lea errores de <code>logs/</code> sin abrir los archivos a mano.
+            </p>
+            <ol className="mcp-steps">
+              <li>
+                {mcpInfo?.exists
+                  ? "El exe ya está junto a la instalación. Sigue con el JSON."
+                  : mcpInfo?.can_build
+                    ? "En este repo todavía no está el release. Pulsa Generar exe."
+                    : "No se incluyó al instalar. Vuelve a ejecutar el instalador y acepta dejar devkit-mcp.exe."}
+              </li>
+              <li>
+                En Cursor: Settings → MCP, o crea <code>.cursor/mcp.json</code> en el proyecto con este contenido.
+              </li>
+              <li>Reinicia los servidores MCP. Quedan tres herramientas: list, tail y search.</li>
+            </ol>
+            {mcpInfo && !mcpInfo.exists && !mcpInfo.can_build && (
+              <p className="modal-error">
+                Esta instalación no trae el código para compilarlo. El exe se genera al armar el instalador; ahí se pregunta si se deja.
+              </p>
+            )}
+            <pre className="mcp-snippet">{mcpCursorJson(mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit"))}</pre>
+            <p className="modal-hint">
+              Comando: <code>{mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit")}</code>
+            </p>
+            <p className="modal-hint">
+              Sin Cursor: <code>devkit logs list</code>, <code>devkit logs tail php</code>, <code>devkit logs search nginx-error emerg</code>.
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setMcpOpen(false)}>
+                Cerrar
+              </button>
+              {!mcpInfo?.exists && mcpInfo?.can_build && (
+                <button
+                  type="button"
+                  className="go"
+                  disabled={!!busy || mcpInfo?.can_build === false}
+                  onClick={() =>
+                    void runHeavy("mcp", async () => {
+                      const msg = await invoke<string>("build_mcp");
+                      const info = await invoke<McpExeInfo>("mcp_exe_status");
+                      setMcpInfo(info);
+                      return msg;
+                    })
+                  }
+                >
+                  {busy === "mcp" ? "Generando…" : "Generar exe"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="go"
+                onClick={() => {
+                  const json = mcpCursorJson(
+                    mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit")
+                  );
+                  void navigator.clipboard.writeText(json).then(
+                    () => setLog("JSON de MCP copiado"),
+                    () => setLog("no se pudo copiar el JSON")
+                  );
+                }}
+              >
+                Copiar JSON
               </button>
             </div>
           </div>

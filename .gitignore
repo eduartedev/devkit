@@ -6,6 +6,7 @@
 /app/node_modules/
 /app/dist/
 /app/src-tauri/target/
+/app/src-tauri/resources/*.exe
 /bin/nginx/
 /bin/php/
 /bin/mariadb/
@@ -35,3 +36,5 @@
 Thumbs.db
 *.zip
 !/crates/**
+
+/dist/

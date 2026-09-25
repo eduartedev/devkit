@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "local.devkit.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/ensure-mcp-resource.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && node scripts/stage-mcp.mjs",
     "frontendDist": "../dist"
   },
     "app": {
@@ -28,6 +28,14 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": {
+      "resources/devkit-mcp.exe": "devkit-mcp.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

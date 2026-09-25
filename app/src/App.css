@@ -289,6 +289,10 @@ button:disabled { opacity: 0.5; cursor: wait; }
   width: 88px;
   text-align: left;
 }
+.settings-timeout {
+  width: 96px;
+  text-align: right;
+}
 .switch {
   display: inline-flex;
   align-items: center;
@@ -454,6 +458,33 @@ button.mini {
   text-transform: uppercase;
 }
 .modal-wide { width: min(560px, 100%); }
+.mcp-steps {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mcp-steps li { margin: 0 0 8px; }
+.mcp-steps code,
+.mcp-snippet {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.mcp-steps code {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--amber);
+}
+.mcp-snippet {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  overflow: auto;
+  background: #0c0f13;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: pre;
+}
 .ext-filter { width: 100%; margin-bottom: 10px; }
 .ext-list {
   max-height: 320px;

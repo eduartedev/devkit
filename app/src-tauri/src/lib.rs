@@ -1,6 +1,6 @@
 use devkit_core::{
-    terminal, watch, AppConfig, AppSettings, DbCredentials, DevKit, Paths, PhpExtensionInfo,
-    PortsSettings, StackStatus,
+    build_mcp_release, mcp_exe_info, terminal, watch, AppConfig, AppSettings, DbCredentials,
+    DevKit, McpExeInfo, Paths, PhpExtensionInfo, PortsSettings, StackStatus,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -36,6 +36,10 @@ impl LightSnap {
 
     fn default_url(&self) -> String {
         format!("http://{}:{}/", self.config.bind, self.config.http_port)
+    }
+
+    fn mailpit_url(&self) -> String {
+        format!("http://{}:{}/", self.config.bind, self.config.mailpit_ui)
     }
 }
 
@@ -191,6 +195,11 @@ async fn adminer_url(state: State<'_, KitState>) -> Result<String, String> {
 #[tauri::command]
 async fn default_url(state: State<'_, KitState>) -> Result<String, String> {
     Ok(state.snap.lock().default_url())
+}
+
+#[tauri::command]
+async fn mailpit_url(state: State<'_, KitState>) -> Result<String, String> {
+    Ok(state.snap.lock().mailpit_url())
 }
 
 #[tauri::command]
@@ -350,6 +359,26 @@ async fn set_php_extensions(
 }
 
 #[tauri::command]
+fn mcp_exe_status(state: State<'_, KitState>) -> McpExeInfo {
+    let root = state.snap.lock().paths.root.clone();
+    mcp_exe_info(&root)
+}
+
+#[tauri::command]
+async fn build_mcp(state: State<'_, KitState>) -> Result<String, String> {
+    try_begin_heavy(&state.heavy, "mcp")?;
+    let root = state.snap.lock().paths.root.clone();
+    let heavy = state.heavy.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        build_mcp_release(&root).map_err(map_err)
+    })
+    .await
+    .map_err(|e| e.to_string());
+    end_heavy(&heavy);
+    result?
+}
+
+#[tauri::command]
 fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(&url, None::<&str>)
@@ -424,6 +453,9 @@ pub fn run() {
             open_terminal,
             adminer_url,
             default_url,
+            mailpit_url,
+            mcp_exe_status,
+            build_mcp,
             isolated_path,
             create_site,
             setup_stack,
@@ -439,9 +471,13 @@ pub fn run() {
             let stop = MenuItem::with_id(app, "stop", "Stop All", true, None::<&str>)?;
             let term = MenuItem::with_id(app, "term", "Terminal DevKit", true, None::<&str>)?;
             let adminer = MenuItem::with_id(app, "adminer", "Adminer", true, None::<&str>)?;
+            let mailpit = MenuItem::with_id(app, "mailpit", "Mailpit", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &sep, &start, &stop, &term, &adminer, &sep, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[&show, &sep, &start, &stop, &term, &adminer, &mailpit, &sep, &quit],
+            )?;
 
             let handle = app.handle().clone();
             TrayIconBuilder::new()
@@ -475,6 +511,12 @@ pub fn run() {
                     "adminer" => {
                         if let Some(s) = app.try_state::<KitState>() {
                             let url = s.snap.lock().adminer_url();
+                            let _ = handle.opener().open_url(&url, None::<&str>);
+                        }
+                    }
+                    "mailpit" => {
+                        if let Some(s) = app.try_state::<KitState>() {
+                            let url = s.snap.lock().mailpit_url();
                             let _ = handle.opener().open_url(&url, None::<&str>);
                         }
                     }
