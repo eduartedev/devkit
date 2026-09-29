@@ -1,15 +1,56 @@
-; Pregunta si se deja devkit-mcp.exe. El binario viaja en el instalador;
-; si la respuesta es no, se borra al terminar de copiar archivos.
+; Página con checkbox para dejar o no devkit-mcp.exe.
+; El exe viaja en el instalador; si la casilla está desmarcada, se borra al final.
+!include nsDialogs.nsh
+!include LogicLib.nsh
+
 Var DevkitInstallMcp
+Var DevkitMcpCheckbox
+
+Function DevkitMcpPagePre
+  ${If} $PassiveMode = 1
+    StrCpy $DevkitInstallMcp "1"
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function DevkitMcpPageCreate
+  !insertmacro MUI_HEADER_TEXT "DevKit MCP" "Opcional"
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
+
+  ${NSD_CreateLabel} 0 0 100% 36u "Permite ver los logs de DevKit desde Cursor u otros agentes."
+  Pop $1
+
+  ${NSD_CreateCheckbox} 0 48u 100% 12u "Instalar DevKit MCP"
+  Pop $DevkitMcpCheckbox
+
+  ${If} $DevkitInstallMcp == "0"
+    ${NSD_Uncheck} $DevkitMcpCheckbox
+  ${Else}
+    ${NSD_Check} $DevkitMcpCheckbox
+  ${EndIf}
+
+  ${NSD_SetFocus} $DevkitMcpCheckbox
+  nsDialogs::Show
+FunctionEnd
+
+Function DevkitMcpPageLeave
+  ${NSD_GetState} $DevkitMcpCheckbox $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $DevkitInstallMcp "1"
+  ${Else}
+    StrCpy $DevkitInstallMcp "0"
+  ${EndIf}
+FunctionEnd
 
 !macro NSIS_HOOK_PREINSTALL
-  IfSilent devkit_mcp_yes
-  MessageBox MB_YESNO|MB_ICONQUESTION "Instalar tambien devkit-mcp.exe para que Cursor lea los logs de DevKit?" IDYES devkit_mcp_yes
-  StrCpy $DevkitInstallMcp "0"
-  Goto devkit_mcp_asked
-  devkit_mcp_yes:
+  ${If} $DevkitInstallMcp == ""
     StrCpy $DevkitInstallMcp "1"
-  devkit_mcp_asked:
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

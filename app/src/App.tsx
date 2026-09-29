@@ -1131,7 +1131,7 @@ export default function App() {
                 <button
                   type="button"
                   className="go"
-                  disabled={!!busy || mcpInfo?.can_build === false}
+                  disabled={!!busy}
                   onClick={() =>
                     void runHeavy("mcp", async () => {
                       const msg = await invoke<string>("build_mcp");
