@@ -19,6 +19,14 @@ pub enum ArtifactKind {
     File { filename: String },
 }
 
+pub fn internet_available() -> bool {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(8))
+        .user_agent("DevKit/0.1 (+local-dev)")
+        .build();
+    agent.get("https://nginx.org/").call().is_ok()
+}
+
 pub fn download_verified(url: &str, dest: &Path, expected_sha256: Option<&str>) -> Result<String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -247,4 +255,54 @@ pub fn composer_latest() -> Result<(String, String)> {
         "https://getcomposer.org/download/latest-stable/composer.phar".into(),
         hash,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    fn write_zip(path: &Path, files: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        for (name, bytes) in files {
+            archive.start_file(*name, opts).unwrap();
+            archive.write_all(bytes).unwrap();
+        }
+        archive.finish().unwrap();
+    }
+
+    #[test]
+    fn unzip_safe_rejects_parent_path() {
+        let root = tempfile::tempdir().unwrap();
+        let zip_path = root.path().join("slip.zip");
+        write_zip(&zip_path, &[("../evil.txt", b"nope")]);
+        let dest = root.path().join("out");
+        let err = unzip_safe(&zip_path, &dest).unwrap_err();
+        assert!(matches!(err, Error::ZipSlip { .. }), "{err}");
+        assert!(!root.path().join("evil.txt").exists());
+        assert!(!dest.join("evil.txt").exists());
+    }
+
+    #[test]
+    fn unzip_safe_flattens_single_root_dir() {
+        let root = tempfile::tempdir().unwrap();
+        let zip_path = root.path().join("nginx.zip");
+        write_zip(
+            &zip_path,
+            &[
+                ("nginx-1.28.2/nginx.exe", b"nginx"),
+                ("nginx-1.28.2/conf/nginx.conf", b"conf"),
+            ],
+        );
+        let dest = root.path().join("nginx");
+        unzip_safe(&zip_path, &dest).unwrap();
+        assert_eq!(fs::read(dest.join("nginx.exe")).unwrap(), b"nginx");
+        assert_eq!(fs::read(dest.join("conf").join("nginx.conf")).unwrap(), b"conf");
+        assert!(!dest.join("nginx-1.28.2").exists());
+    }
 }

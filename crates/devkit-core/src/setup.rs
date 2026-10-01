@@ -32,31 +32,105 @@ pub fn run_setup(paths: &Paths, cfg: &AppConfig, full: bool, php_major: Option<&
     write_default_index(paths)?;
     let mut report = SetupReport { lines: Vec::new() };
     let php_major = php_major.unwrap_or(cfg.php_version.as_str());
+    let offline = paths.root.join("offline");
+    let bundled = offline_bundle_ready(&offline);
+    let online = bundled && crate::download::internet_available();
+    let mut used_bundle = false;
 
-    install_nginx(paths, &mut report)?;
-    install_php(paths, php_major, cfg, &mut report)?;
-    if full && php_major != "8.4" {
-        let _ = install_php(paths, "8.4", cfg, &mut report);
+    if !full && prefer_bundled_stack(online, bundled) {
+        report.push("sin internet: usando Nginx, PHP, MariaDB y Composer del instalador");
+        import_offline_bundle(&offline, paths)?;
+        used_bundle = true;
+    } else if !full && bundled {
+        report.push("hay internet: descargando Nginx, PHP, MariaDB y Composer");
     }
-    install_mariadb(paths, cfg, &mut report)?;
-    install_adminer(paths, &mut report)?;
+
+    if let Err(err) = install_components(paths, cfg, full, php_major, &mut report) {
+        if !full && bundled && !used_bundle {
+            report.push("la descarga falló: usando los binarios del instalador");
+            import_offline_bundle(&offline, paths)?;
+            install_components(paths, cfg, full, php_major, &mut report)?;
+        } else {
+            return Err(err);
+        }
+    }
+
+    if bundled {
+        let _ = fs::remove_dir_all(&offline);
+    }
+    Ok(report)
+}
+
+fn install_components(
+    paths: &Paths,
+    cfg: &AppConfig,
+    full: bool,
+    php_major: &str,
+    report: &mut SetupReport,
+) -> Result<()> {
+    install_nginx(paths, report)?;
+    install_php(paths, php_major, cfg, report)?;
+    if full && php_major != "8.4" {
+        let _ = install_php(paths, "8.4", cfg, report);
+    }
+    install_mariadb(paths, cfg, report)?;
+    install_adminer(paths, report)?;
 
     if full {
-        install_redis(paths, cfg, &mut report)?;
-        install_mailpit(paths, &mut report)?;
-        install_mkcert(paths, &mut report)?;
-        install_node(paths, &mut report)?;
-        install_composer(paths, &mut report)?;
+        install_redis(paths, cfg, report)?;
+        install_mailpit(paths, report)?;
+        install_mkcert(paths, report)?;
+        install_node(paths, report)?;
+        install_composer(paths, report)?;
     } else {
-        let _ = install_composer(paths, &mut report);
-        report.push("setup básico listo (usa --full para Redis, Mailpit, mkcert y Node)");
+        install_composer(paths, report)?;
+        report.push("setup básico listo (Nginx, PHP, MariaDB y Composer). Setup completo añade Redis, Mailpit, mkcert y Node");
     }
 
     let _ = crate::secrets::mysql_credentials(paths)?;
     report.push(
         "MariaDB: usuario root sin contraseña por defecto (editable en el panel / secrets)",
     );
-    Ok(report)
+    Ok(())
+}
+
+/// Con internet se descarga. Sin internet, y si el instalador trae `offline/`, se usa esa copia.
+pub fn prefer_bundled_stack(internet: bool, bundle_present: bool) -> bool {
+    bundle_present && !internet
+}
+
+fn offline_bundle_ready(offline: &std::path::Path) -> bool {
+    offline.join("bin").join("nginx").join("nginx.exe").is_file()
+}
+
+fn import_offline_bundle(offline: &std::path::Path, paths: &Paths) -> Result<()> {
+    copy_dir_contents(&offline.join("bin"), &paths.bin)?;
+    let www = offline.join("www");
+    if www.is_dir() {
+        copy_dir_contents(&www, &paths.www)?;
+    }
+    Ok(())
+}
+
+fn copy_dir_contents(src: &std::path::Path, dest: &std::path::Path) -> Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dest.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_contents(&entry.path(), &to)?;
+        } else {
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(entry.path(), &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn install_nginx(paths: &Paths, report: &mut SetupReport) -> Result<()> {
@@ -256,4 +330,123 @@ pub fn log_setup(paths: &Paths, report: &SetupReport) -> Result<()> {
         writeln!(f, "{line}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn bundle_is_used_only_when_offline() {
+        assert!(prefer_bundled_stack(false, true));
+        assert!(!prefer_bundled_stack(true, true));
+        assert!(!prefer_bundled_stack(false, false));
+        assert!(!prefer_bundled_stack(true, false));
+    }
+
+    #[test]
+    fn offline_bundle_requires_nginx_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!offline_bundle_ready(dir.path()));
+        let php = dir.path().join("bin").join("php").join("8.3");
+        fs::create_dir_all(&php).unwrap();
+        fs::write(php.join("php-cgi.exe"), b"php").unwrap();
+        assert!(!offline_bundle_ready(dir.path()));
+        let nginx = dir.path().join("bin").join("nginx");
+        fs::create_dir_all(&nginx).unwrap();
+        fs::write(nginx.join("nginx.exe"), b"nginx").unwrap();
+        assert!(offline_bundle_ready(dir.path()));
+    }
+
+    #[test]
+    fn import_offline_copies_nginx_into_bin() {
+        let root = std::env::temp_dir().join(format!("devkit-offline-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let offline_nginx = root.join("offline").join("bin").join("nginx");
+        fs::create_dir_all(&offline_nginx).unwrap();
+        let mut exe = fs::File::create(offline_nginx.join("nginx.exe")).unwrap();
+        exe.write_all(b"nginx").unwrap();
+        let paths = Paths::from_root(root.join("kit"));
+        fs::create_dir_all(&paths.bin).unwrap();
+        import_offline_bundle(&root.join("offline"), &paths).unwrap();
+        let copied = fs::read(paths.nginx_exe()).unwrap();
+        assert_eq!(copied, b"nginx");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_offline_copies_stack_and_adminer() {
+        let root = tempfile::tempdir().unwrap();
+        let offline = root.path().join("offline");
+        write_file(&offline.join("bin").join("nginx").join("nginx.exe"), b"nginx");
+        write_file(
+            &offline.join("bin").join("php").join("8.3").join("php-cgi.exe"),
+            b"php",
+        );
+        write_file(
+            &offline.join("bin").join("mariadb").join("bin").join("mysqld.exe"),
+            b"mysqld",
+        );
+        write_file(
+            &offline.join("bin").join("composer").join("composer.phar"),
+            b"composer",
+        );
+        write_file(&offline.join("www").join("adminer").join("index.php"), b"<?php");
+        let paths = Paths::from_root(root.path().join("kit"));
+        import_offline_bundle(&offline, &paths).unwrap();
+        assert_eq!(fs::read(paths.nginx_exe()).unwrap(), b"nginx");
+        assert_eq!(fs::read(paths.php_cgi("8.3")).unwrap(), b"php");
+        assert_eq!(fs::read(paths.mysqld()).unwrap(), b"mysqld");
+        assert_eq!(fs::read(paths.composer()).unwrap(), b"composer");
+        assert_eq!(
+            fs::read(paths.www.join("adminer").join("index.php")).unwrap(),
+            b"<?php"
+        );
+    }
+
+    #[test]
+    fn import_offline_without_www_still_copies_bin() {
+        let root = tempfile::tempdir().unwrap();
+        let offline = root.path().join("offline");
+        write_file(&offline.join("bin").join("nginx").join("nginx.exe"), b"nginx");
+        let paths = Paths::from_root(root.path().join("kit"));
+        import_offline_bundle(&offline, &paths).unwrap();
+        assert_eq!(fs::read(paths.nginx_exe()).unwrap(), b"nginx");
+        assert!(!paths.www.join("adminer").exists());
+    }
+
+    #[test]
+    fn basic_setup_skips_download_when_binaries_exist() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(root.path().to_path_buf());
+        paths.ensure().unwrap();
+        let cfg = AppConfig::default();
+        write_file(&paths.nginx_exe(), b"nginx");
+        write_file(&paths.php_cgi(&cfg.php_version), b"php");
+        write_file(&paths.mysqld(), b"mysqld");
+        write_file(&paths.composer(), b"composer");
+        write_file(&paths.www.join("adminer").join("index.php"), b"<?php");
+
+        let report = run_setup(&paths, &cfg, false, None).unwrap();
+        let text = report.lines.join("\n");
+        assert!(text.contains("nginx: ya instalado"), "{text}");
+        assert!(text.contains("php 8.3: ya instalado"), "{text}");
+        assert!(text.contains("mariadb: ya instalado"), "{text}");
+        assert!(text.contains("adminer: ya instalado"), "{text}");
+        assert!(text.contains("composer: ya instalado"), "{text}");
+        assert!(
+            !text.to_ascii_lowercase().contains("descargando"),
+            "{text}"
+        );
+        assert_eq!(fs::read(paths.nginx_exe()).unwrap(), b"nginx");
+        assert_eq!(fs::read(paths.composer()).unwrap(), b"composer");
+    }
+
+    fn write_file(path: &std::path::Path, bytes: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, bytes).unwrap();
+    }
 }

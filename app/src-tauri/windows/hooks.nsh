@@ -54,6 +54,13 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  DetailPrint "Si hay internet se descargan Nginx, PHP, MariaDB y Composer. Si no, se usan los del instalador."
+  System::Call 'kernel32::SetEnvironmentVariable(t "DEVKIT_ROOT", t "$INSTDIR")'
+  nsExec::ExecToLog '"$INSTDIR\devkit.exe" setup'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONEXCLAMATION "No se pudo instalar Nginx, PHP, MariaDB y Composer.$\nAbre DevKit y usa Setup completo, o revisa la carpeta logs."
+  ${EndIf}
   StrCmp $DevkitInstallMcp "1" devkit_mcp_keep
     Delete "$INSTDIR\devkit-mcp.exe"
   devkit_mcp_keep:
