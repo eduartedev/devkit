@@ -73,6 +73,7 @@ console.log(`dist: origen ${release}`);
 
 copyOne(join(release, "devkit-ui.exe"), "DevKit.exe");
 copyOne(join(release, "devkit-mcp.exe"), "devkit-mcp.exe");
+copyOne(join(release, "devkit.exe"), "devkit.exe");
 
 const nsis = join(release, "bundle", "nsis");
 if (existsSync(nsis)) {

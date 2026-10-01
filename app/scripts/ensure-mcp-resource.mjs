@@ -6,15 +6,26 @@ import { fileURLToPath } from "node:url";
 // No compila devkit-mcp: si hay un release previo lo copia; si no, deja un marcador.
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(appDir, "..");
-const built = resolve(root, "target", "release", "devkit-mcp.exe");
 const destDir = resolve(appDir, "src-tauri", "resources");
-const dest = resolve(destDir, "devkit-mcp.exe");
+
+function ensureExe(built, dest, label) {
+  if (existsSync(built)) {
+    copyFileSync(built, dest);
+    console.log(`recurso ${label}: copia de target/release`);
+  } else if (!existsSync(dest)) {
+    writeFileSync(dest, "");
+    console.log(`recurso ${label}: marcador vacío (el instalador lo sustituye al empaquetar)`);
+  }
+}
 
 mkdirSync(destDir, { recursive: true });
-if (existsSync(built)) {
-  copyFileSync(built, dest);
-  console.log("recurso MCP: copia de target/release/devkit-mcp.exe");
-} else if (!existsSync(dest)) {
-  writeFileSync(dest, "");
-  console.log("recurso MCP: marcador vacío (el instalador lo sustituye al empaquetar)");
-}
+ensureExe(
+  resolve(root, "target", "release", "devkit-mcp.exe"),
+  resolve(destDir, "devkit-mcp.exe"),
+  "devkit-mcp.exe"
+);
+ensureExe(
+  resolve(root, "target", "release", "devkit.exe"),
+  resolve(destDir, "devkit.exe"),
+  "devkit.exe"
+);

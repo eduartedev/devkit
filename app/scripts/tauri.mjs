@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 
-const run = spawnSync("npx", ["tauri", ...args], {
+const tauriArgs = [...args];
+if (args[0] === "build") {
+  tauriArgs.push("--config", "src-tauri/tauri.offline.json");
+}
+
+const run = spawnSync("npx", ["tauri", ...tauriArgs], {
   cwd: appDir,
   stdio: "inherit",
   shell: true,

@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "node scripts/ensure-mcp-resource.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && node scripts/stage-mcp.mjs",
+    "beforeBuildCommand": "npm run build && node scripts/stage-mcp.mjs && node scripts/stage-stack.mjs",
     "frontendDist": "../dist"
   },
     "app": {
@@ -29,7 +29,8 @@
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "resources/devkit-mcp.exe": "devkit-mcp.exe"
+      "resources/devkit-mcp.exe": "devkit-mcp.exe",
+      "resources/devkit.exe": "devkit.exe"
     },
     "windows": {
       "nsis": {
