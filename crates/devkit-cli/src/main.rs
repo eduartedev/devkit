@@ -14,7 +14,7 @@ struct Cli {
 enum Commands {
     /// Descarga binarios oficiales (HTTPS + SHA-256)
     Setup {
-        /// Redis, Mailpit, mkcert, Node
+        /// Redis, Mailpit y mkcert. Node va en el setup básico.
         #[arg(long)]
         full: bool,
         /// Major de PHP (8.3 o 8.4)

@@ -35,12 +35,15 @@ const nginx = join(root, "bin", "nginx");
 const php = join(root, "bin", "php", version);
 const mariadb = join(root, "bin", "mariadb");
 const composer = join(root, "bin", "composer", "composer.phar");
+const node = join(root, "bin", "node");
 const adminer = join(root, "www", "adminer", "index.php");
 
 requireDir(join(nginx, "nginx.exe"), "nginx.exe");
 requireDir(join(php, "php-cgi.exe"), `php-cgi.exe (${version})`);
 requireDir(join(mariadb, "bin", "mysqld.exe"), "mysqld.exe");
 requireDir(composer, "composer.phar");
+requireDir(join(node, "node.exe"), "node.exe");
+requireDir(join(node, "npm.cmd"), "npm.cmd");
 requireDir(adminer, "adminer (www/adminer/index.php)");
 
 rmSync(destRoot, { recursive: true, force: true });
@@ -48,9 +51,10 @@ mkdirSync(destRoot, { recursive: true });
 copyTree(nginx, join(destRoot, "bin", "nginx"));
 copyTree(php, join(destRoot, "bin", "php", version));
 copyTree(mariadb, join(destRoot, "bin", "mariadb"));
+copyTree(node, join(destRoot, "bin", "node"));
 mkdirSync(join(destRoot, "bin", "composer"), { recursive: true });
 cpSync(composer, join(destRoot, "bin", "composer", "composer.phar"));
 mkdirSync(join(destRoot, "www", "adminer"), { recursive: true });
 cpSync(adminer, join(destRoot, "www", "adminer", "index.php"));
 
-console.log(`Stack básico completo (PHP ${version}, sin PDB) en ${destRoot}`);
+console.log(`Stack básico completo (PHP ${version}, Node, sin PDB) en ${destRoot}`);

@@ -38,11 +38,11 @@ pub fn run_setup(paths: &Paths, cfg: &AppConfig, full: bool, php_major: Option<&
     let mut used_bundle = false;
 
     if !full && prefer_bundled_stack(online, bundled) {
-        report.push("sin internet: usando Nginx, PHP, MariaDB y Composer del instalador");
+        report.push("sin internet: usando Nginx, PHP, MariaDB, Composer y Node del instalador");
         import_offline_bundle(&offline, paths)?;
         used_bundle = true;
     } else if !full && bundled {
-        report.push("hay internet: descargando Nginx, PHP, MariaDB y Composer");
+        report.push("hay internet: descargando Nginx, PHP, MariaDB, Composer y Node");
     }
 
     if let Err(err) = install_components(paths, cfg, full, php_major, &mut report) {
@@ -75,16 +75,16 @@ fn install_components(
     }
     install_mariadb(paths, cfg, report)?;
     install_adminer(paths, report)?;
+    install_node(paths, report)?;
 
     if full {
         install_redis(paths, cfg, report)?;
         install_mailpit(paths, report)?;
         install_mkcert(paths, report)?;
-        install_node(paths, report)?;
         install_composer(paths, report)?;
     } else {
         install_composer(paths, report)?;
-        report.push("setup básico listo (Nginx, PHP, MariaDB y Composer). Setup completo añade Redis, Mailpit, mkcert y Node");
+        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer y Node). Setup completo añade Redis, Mailpit y mkcert");
     }
 
     let _ = crate::secrets::mysql_credentials(paths)?;
@@ -283,6 +283,9 @@ fn install_node(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     let zip = paths.tmp.join(format!("node-{ver}-win-x64.zip"));
     download_verified(&url, &zip, Some(&sha))?;
     unzip_safe(&zip, &paths.bin.join("node"))?;
+    if !paths.node_exe().exists() {
+        return Err(Error::msg("node.exe no apareció tras extraer"));
+    }
     report.push(format!("node {ver}: instalado"));
     Ok(())
 }
