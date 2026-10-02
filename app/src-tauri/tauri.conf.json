@@ -35,7 +35,9 @@
     "windows": {
       "nsis": {
         "template": "./windows/installer.nsi",
-        "installerHooks": "./windows/hooks.nsh"
+        "installerHooks": "./windows/hooks.nsh",
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": true
       }
     },
     "icon": [

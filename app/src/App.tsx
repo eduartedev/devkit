@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import { hasMessage, LANG_OPTIONS, type MessageKey } from "./i18n/index.ts";
+import { useI18n } from "./i18n/I18n.tsx";
 
 type Status = "stopped" | "starting" | "running" | "crashed";
 
@@ -76,14 +78,14 @@ type Stack = {
   port_checks?: PortCheck[];
 };
 
-const PORT_FIELDS: { key: keyof PortsSettings; label: string }[] = [
-  { key: "http_port", label: "HTTP (Nginx)" },
-  { key: "https_port", label: "HTTPS" },
-  { key: "php_port", label: "PHP-FPM" },
-  { key: "mysql_port", label: "MariaDB" },
-  { key: "redis_port", label: "Redis" },
-  { key: "mailpit_ui", label: "Mailpit UI" },
-  { key: "mailpit_smtp", label: "Mailpit SMTP" },
+const PORT_FIELDS: { key: keyof PortsSettings; label: MessageKey }[] = [
+  { key: "http_port", label: "portHttp" },
+  { key: "https_port", label: "portHttps" },
+  { key: "php_port", label: "portPhp" },
+  { key: "mysql_port", label: "portMysql" },
+  { key: "redis_port", label: "portRedis" },
+  { key: "mailpit_ui", label: "portMailpitUi" },
+  { key: "mailpit_smtp", label: "portMailpitSmtp" },
 ];
 
 type McpExeInfo = {
@@ -108,20 +110,24 @@ function mcpCursorJson(exePath: string): string {
 }`;
 }
 
-function portBadge(owner: PortOwner): { label: string; cls: string } {
+function portBadge(
+  owner: PortOwner,
+  t: (key: MessageKey) => string,
+): { label: string; cls: string } {
   switch (owner.kind) {
     case "free":
-      return { label: "libre", cls: "port-free" };
+      return { label: t("badgeFree"), cls: "port-free" };
     case "ours":
-      return { label: "DevKit", cls: "port-ours" };
+      return { label: t("badgeOurs"), cls: "port-ours" };
     case "foreign":
-      return { label: "ocupado", cls: "port-busy" };
+      return { label: t("badgeBusy"), cls: "port-busy" };
     case "unknown":
       return { label: "?", cls: "port-busy" };
   }
 }
 
 export default function App() {
+  const { lang, setLang, t } = useI18n();
   const [stack, setStack] = useState<Stack | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string>("");
@@ -143,6 +149,7 @@ export default function App() {
   const [mcpOpen, setMcpOpen] = useState(false);
   const [mcpInfo, setMcpInfo] = useState<McpExeInfo | null>(null);
   const [appOpen, setAppOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"sites" | "php" | "general">("sites");
   const [appDraft, setAppDraft] = useState<AppSettings | null>(null);
   const [appError, setAppError] = useState("");
   const moreRef = useRef<HTMLDivElement>(null);
@@ -185,7 +192,7 @@ export default function App() {
   /** Acciones pesadas: una a la vez (bloquean Start/Stop/config, no Terminal/URLs). */
   async function runHeavy(label: string, fn: () => Promise<unknown>) {
     if (busy) {
-      setLog(`ya hay una operación en curso (${busy})`);
+      setLog(t("busyInProgress", { op: operationName(busy) }));
       return;
     }
     setBusy(label);
@@ -235,7 +242,7 @@ export default function App() {
       const st = await invoke<Stack>("update_ports", { ports: portsDraft });
       setStack(st);
       setPortsOpen(false);
-      setLog("Puertos guardados y servicios reiniciados.");
+      setLog(t("portsSaved"));
       await refresh();
     } catch (e) {
       setPortsError(String(e));
@@ -275,6 +282,7 @@ export default function App() {
 
   async function openAppModal() {
     setAppError("");
+    setSettingsTab("sites");
     try {
       const cfg = await invoke<AppSettings>("get_app_settings");
       setAppDraft(cfg);
@@ -330,6 +338,11 @@ export default function App() {
     }
   }
 
+  function operationName(id: string): string {
+    const key = `busy.${id}`;
+    return hasMessage(key) ? t(key) : id;
+  }
+
   const running = stack?.services.some((s) => s.status === "running") ?? false;
   const httpPort = stack?.services.find((s) => s.id === "nginx")?.port ?? 8080;
 
@@ -337,7 +350,7 @@ export default function App() {
     <div className="deck">
       <header className="mast">
         <div>
-          <p className="kicker">LOCAL STACK · 127.0.0.1</p>
+          <p className="kicker">{t("kicker")}</p>
           <h1>DevKit</h1>
         </div>
         <div className="mast-actions">
@@ -346,17 +359,17 @@ export default function App() {
             disabled={!!busy}
             onClick={() => runHeavy("start", () => invoke("start_all"))}
           >
-            Start All
+            {t("startAll")}
           </button>
           <button
             className="stop"
             disabled={!!busy}
             onClick={() => runHeavy("stop", () => invoke("stop_all"))}
           >
-            Stop All
+            {t("stopAll")}
           </button>
           <span className={`lamp ${running ? "on" : "off"}`}>
-            {running ? "EN AIRE" : "SILENCIO"}
+            {running ? t("lampOn") : t("lampOff")}
           </span>
         </div>
       </header>
@@ -382,7 +395,7 @@ export default function App() {
 
       <main className="grid">
         <section className="panel">
-          <h2>Servicios</h2>
+          <h2>{t("services")}</h2>
           <ul className="services">
             {stack?.services.map((s) => (
               <li key={s.id}>
@@ -400,7 +413,7 @@ export default function App() {
                       runHeavy(s.id, () => invoke("stop_service", { id: s.id }))
                     }
                   >
-                    stop
+                    {t("stop")}
                   </button>
                 ) : (
                   <button
@@ -409,27 +422,27 @@ export default function App() {
                       runHeavy(s.id, () => invoke("start_service", { id: s.id }))
                     }
                   >
-                    start
+                    {t("start")}
                   </button>
                 )}
               </li>
             ))}
             {!stack?.services.length && (
-              <li className="empty">Aún no hay binarios. Ejecuta setup.</li>
+              <li className="empty">{t("servicesEmpty")}</li>
             )}
           </ul>
         </section>
 
         <section className="panel">
           <div className="panel-head">
-            <h2>Sitios · www</h2>
+            <h2>{t("sites")}</h2>
             <button
               type="button"
               disabled={!!busy}
-              title="Reescribe etc/nginx/sites (Laravel → public/)"
+              title={t("regenVhostsTitle")}
               onClick={() => runHeavy("vhosts", () => invoke("regenerate_vhosts"))}
             >
-              Regenerar vhosts
+              {t("regenVhosts")}
             </button>
           </div>
           <ul className="sites">
@@ -445,7 +458,7 @@ export default function App() {
                   <button
                     type="button"
                     className="mini"
-                    title="Editar vhost en bloc de notas"
+                    title={t("vhostTitle")}
                     onClick={() =>
                       runLight(() => invoke("open_site_vhost", { name: s.name }))
                     }
@@ -456,7 +469,7 @@ export default function App() {
                 <code>{s.url}</code>
               </li>
             ))}
-            {!stack?.sites.length && <li className="empty">Crea una carpeta en www/</li>}
+            {!stack?.sites.length && <li className="empty">{t("sitesEmpty")}</li>}
           </ul>
           <form
             className="create"
@@ -469,30 +482,30 @@ export default function App() {
             }}
           >
             <select value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="blank">PHP en blanco</option>
-              <option value="laravel">Laravel</option>
-              <option value="wordpress">WordPress</option>
+              <option value="blank">{t("kindBlank")}</option>
+              <option value="laravel">{t("kindLaravel")}</option>
+              <option value="wordpress">{t("kindWordpress")}</option>
             </select>
             <input
-              placeholder="nombre-del-sitio"
+              placeholder={t("sitePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
             <button type="submit" disabled={!!busy}>
-              Crear
+              {t("create")}
             </button>
           </form>
         </section>
         <section className="panel">
           <div className="panel-head">
-            <h2>Puertos</h2>
+            <h2>{t("ports")}</h2>
             <button type="button" disabled={!!busy} onClick={openPortsModal}>
-              Editar
+              {t("edit")}
             </button>
           </div>
           <ul className="ports">
             {(stack?.port_checks ?? []).map((p) => {
-              const badge = portBadge(p.owner);
+              const badge = portBadge(p.owner, t);
               const who =
                 p.owner.kind === "foreign"
                   ? p.owner.processes.map((x) => `${x.name}#${x.pid}`).join(", ")
@@ -508,14 +521,14 @@ export default function App() {
                     </b>
                     <small>{who}</small>
                     {p.owner.kind === "foreign" && p.suggested_ports.length > 0 && (
-                      <small>alternativas: {p.suggested_ports.join(", ")}</small>
+                      <small>{t("portAlt", { list: p.suggested_ports.join(", ") })}</small>
                     )}
                   </div>
                 </li>
               );
             })}
             {!stack?.port_checks?.length && (
-              <li className="empty">Sin datos de puertos aún</li>
+              <li className="empty">{t("portsEmpty")}</li>
             )}
           </ul>
         </section>
@@ -524,10 +537,10 @@ export default function App() {
       <section className="tools">
         <button
           type="button"
-          title="Abre cmd/Terminal con PATH de DevKit (php, composer, mysql…)"
+          title={t("terminalTitle")}
           onClick={() => runLight(() => invoke("open_terminal"))}
         >
-          Terminal
+          {t("terminal")}
         </button>
         <button
           type="button"
@@ -543,7 +556,7 @@ export default function App() {
         </button>
         <button
           type="button"
-          title="Abre la bandeja de correo de Mailpit"
+          title={t("mailpitTitle")}
           onClick={() =>
             runLight(async () => {
               const url = await invoke<string>("mailpit_url");
@@ -562,11 +575,11 @@ export default function App() {
             aria-haspopup="menu"
             onClick={() => setMoreOpen((o) => !o)}
           >
-            Más…
+            {t("more")}
           </button>
           {moreOpen && (
             <div className="tools-dropdown" role="menu">
-              <p className="tools-group">DevKit</p>
+              <p className="tools-group">{t("groupDevkit")}</p>
               <button
                 type="button"
                 role="menuitem"
@@ -575,7 +588,7 @@ export default function App() {
                   openAppModal();
                 }}
               >
-                Configuración
+                {t("settings")}
               </button>
               <button
                 type="button"
@@ -588,10 +601,10 @@ export default function App() {
                     .catch(() => setMcpInfo(null));
                 }}
               >
-                MCP de logs
+                {t("mcp")}
               </button>
 
-              <p className="tools-group">Base de datos</p>
+              <p className="tools-group">{t("groupDb")}</p>
               <button
                 type="button"
                 role="menuitem"
@@ -600,16 +613,16 @@ export default function App() {
                   openDbModal();
                 }}
               >
-                Credenciales
+                {t("credentials")}
               </button>
 
-              <p className="tools-group">PHP</p>
+              <p className="tools-group">{t("groupPhp")}</p>
               {php.length > 0 ? (
                 <select
                   className="tools-php"
                   value={stack?.php_version}
                   disabled={!!busy}
-                  aria-label="Versión de PHP"
+                  aria-label={t("phpVersion")}
                   onChange={(e) => {
                     setMoreOpen(false);
                     runHeavy("php", () => invoke("use_php", { version: e.target.value }));
@@ -622,7 +635,7 @@ export default function App() {
                   ))}
                 </select>
               ) : (
-                <p className="tools-empty">Sin PHP instalado</p>
+                <p className="tools-empty">{t("noPhp")}</p>
               )}
               <button
                 type="button"
@@ -632,10 +645,10 @@ export default function App() {
                   openExtModal();
                 }}
               >
-                Extensiones
+                {t("extensions")}
               </button>
 
-              <p className="tools-group">Red</p>
+              <p className="tools-group">{t("groupNet")}</p>
               <button
                 type="button"
                 role="menuitem"
@@ -649,7 +662,7 @@ export default function App() {
                   });
                 }}
               >
-                Abrir localhost :{httpPort}
+                {t("openLocal", { port: httpPort })}
               </button>
               <button
                 type="button"
@@ -660,7 +673,7 @@ export default function App() {
                   runHeavy("ports", () => invoke("check_ports"));
                 }}
               >
-                Revisar puertos
+                {t("checkPorts")}
               </button>
               <button
                 type="button"
@@ -670,22 +683,22 @@ export default function App() {
                   openPortsModal();
                 }}
               >
-                Editar puertos
+                {t("editPorts")}
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
-                title="Solo actualiza el bloque # BEGIN DEVKIT. Puede pedir UAC."
+                title={t("updateHostsTitle")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("hosts", () => invoke("ensure_hosts"));
                 }}
               >
-                Actualizar hosts
+                {t("updateHosts")}
               </button>
 
-              <p className="tools-group">Sistema</p>
+              <p className="tools-group">{t("groupSystem")}</p>
               <button
                 type="button"
                 role="menuitem"
@@ -695,7 +708,7 @@ export default function App() {
                   runHeavy("ssl", () => invoke("enable_ssl"));
                 }}
               >
-                SSL mkcert
+                {t("ssl")}
               </button>
               <button
                 type="button"
@@ -706,7 +719,7 @@ export default function App() {
                   runHeavy("pack", () => invoke("pack_portable"));
                 }}
               >
-                Zip portable
+                {t("zip")}
               </button>
               <button
                 type="button"
@@ -717,7 +730,7 @@ export default function App() {
                   runHeavy("setup", () => invoke("setup_stack", { full: true }));
                 }}
               >
-                Setup completo
+                {t("setupFull")}
               </button>
             </div>
           )}
@@ -726,7 +739,7 @@ export default function App() {
 
       {(busy || log || stack?.warnings?.length) && (
         <pre className="log">
-          {busy ? `… ${busy}\n` : ""}
+          {busy ? `… ${operationName(busy)}\n` : ""}
           {stack?.warnings?.join("\n")}
           {log}
         </pre>
@@ -745,15 +758,12 @@ export default function App() {
             aria-labelledby="ports-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="ports-modal-title">Editar puertos</h2>
-            <p className="modal-hint">
-              Al guardar se actualiza config.toml, se regeneran configs y se reinician los
-              servicios.
-            </p>
+            <h2 id="ports-modal-title">{t("portsTitle")}</h2>
+            <p className="modal-hint">{t("portsHint")}</p>
             <div className="port-form">
               {PORT_FIELDS.map(({ key, label }) => (
                 <label key={key}>
-                  <span>{label}</span>
+                  <span>{t(label)}</span>
                   <input
                     type="number"
                     min={1}
@@ -778,7 +788,7 @@ export default function App() {
             {portsError && <p className="modal-error">{portsError}</p>}
             <div className="modal-actions">
               <button type="button" disabled={!!busy} onClick={() => setPortsOpen(false)}>
-                Cancelar
+                {t("cancel")}
               </button>
               <button
                 type="button"
@@ -786,7 +796,7 @@ export default function App() {
                 disabled={!!busy}
                 onClick={savePorts}
               >
-                Guardar y reiniciar
+                {t("saveRestart")}
               </button>
             </div>
           </div>
@@ -807,24 +817,67 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <header className="settings-head">
-              <p className="settings-kicker">DevKit · app</p>
-              <h2 id="app-modal-title">Configuración</h2>
-              <p className="modal-hint">
-                Al guardar se regeneran vhosts y se actualiza el bloque hosts de DevKit.
-              </p>
+              <p className="settings-kicker">{t("settingsKicker")}</p>
+              <h2 id="app-modal-title">{t("settingsTitle")}</h2>
+              <p className="modal-hint">{t("settingsHint")}</p>
             </header>
 
+            <div className="settings-tabs" role="tablist" aria-label={t("settingsTitle")}>
+              <button
+                type="button"
+                role="tab"
+                id="settings-tab-sites"
+                aria-selected={settingsTab === "sites"}
+                aria-controls="settings-panel-sites"
+                className={settingsTab === "sites" ? "on" : undefined}
+                onClick={() => setSettingsTab("sites")}
+              >
+                {t("tabSites")}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="settings-tab-php"
+                aria-selected={settingsTab === "php"}
+                aria-controls="settings-panel-php"
+                className={settingsTab === "php" ? "on" : undefined}
+                onClick={() => setSettingsTab("php")}
+              >
+                {t("tabPhp")}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="settings-tab-general"
+                aria-selected={settingsTab === "general"}
+                aria-controls="settings-panel-general"
+                className={settingsTab === "general" ? "on" : undefined}
+                onClick={() => setSettingsTab("general")}
+              >
+                {t("tabGeneral")}
+              </button>
+            </div>
+
+            <div className="settings-body">
+            <div
+              role="tabpanel"
+              id="settings-panel-sites"
+              aria-labelledby="settings-tab-sites"
+              className={settingsTab === "sites" ? "is-active" : undefined}
+              inert={settingsTab === "sites" ? undefined : true}
+            >
             <section className="settings-section">
-              <h3 className="settings-section-title">Sitios</h3>
+              <h3 className="settings-section-title">{t("sectionSites")}</h3>
               <div className="settings-row">
                 <div className="settings-copy">
-                  <span className="settings-label">TLD</span>
+                  <span className="settings-label">{t("tld")}</span>
                   <p className="settings-desc">
-                    Sufijo de los hostnames locales (
+                    {t("tldBefore")}
                     <code>
-                      nombre.<b>{appDraft.tld.trim() || "…"}</b>
+                      {t("tldHost")}
+                      <b>{appDraft.tld.trim() || "…"}</b>
                     </code>
-                    ).
+                    {t("tldAfter")}
                   </p>
                 </div>
                 <div className="settings-control settings-control-tld">
@@ -833,7 +886,7 @@ export default function App() {
                     value={appDraft.tld}
                     disabled={!!busy}
                     placeholder="test"
-                    aria-label="TLD de sitios"
+                    aria-label={t("tldAria")}
                     onChange={(e) =>
                       setAppDraft((prev) =>
                         prev ? { ...prev, tld: e.target.value } : prev,
@@ -845,13 +898,14 @@ export default function App() {
             </section>
 
             <section className="settings-section">
-              <h3 className="settings-section-title">Carpeta www</h3>
+              <h3 className="settings-section-title">{t("sectionWww")}</h3>
               <div className="settings-row">
                 <div className="settings-copy">
-                  <span className="settings-label">Junctions / symlinks</span>
+                  <span className="settings-label">{t("junctions")}</span>
                   <p className="settings-desc">
-                    Si está activo, las carpetas enlazadas en <code>www/</code> (p. ej. desde
-                    Laragon) cuentan como sitios. Si no, solo carpetas reales.
+                    {t("junctionsBefore")}
+                    <code>www/</code>
+                    {t("junctionsAfter")}
                   </p>
                 </div>
                 <div className="settings-control">
@@ -876,23 +930,34 @@ export default function App() {
                   >
                     <span className="switch-knob" />
                     <span className="switch-text">
-                      {appDraft.follow_www_junctions ? "Sí" : "No"}
+                      {appDraft.follow_www_junctions ? t("yes") : t("no")}
                     </span>
                   </button>
                 </div>
               </div>
             </section>
+            </div>
 
+            <div
+              role="tabpanel"
+              id="settings-panel-php"
+              aria-labelledby="settings-tab-php"
+              className={settingsTab === "php" ? "is-active" : undefined}
+              inert={settingsTab === "php" ? undefined : true}
+            >
             <section className="settings-section">
-              <h3 className="settings-section-title">PHP</h3>
+              <h3 className="settings-section-title">{t("sectionPhp")}</h3>
               <div className="settings-row">
                 <div className="settings-copy">
-                  <span className="settings-label">Espera de Nginx</span>
+                  <span className="settings-label">{t("nginxWait")}</span>
                   <p className="settings-desc">
-                    Segundos que Nginx espera a PHP (<code>fastcgi_read_timeout</code> y{" "}
-                    <code>fastcgi_send_timeout</code>) en los dos bloques{" "}
-                    <code>location ~ \.php$</code>. El defecto es 60. Un instalador largo
-                    (Duplicator) suele necesitar 3600.
+                    {t("nginxWaitBefore")}
+                    <code>fastcgi_read_timeout</code>
+                    {t("nginxWaitAnd")}
+                    <code>fastcgi_send_timeout</code>
+                    {t("nginxWaitMid")}
+                    <code>location ~ \.php$</code>
+                    {t("nginxWaitAfter")}
                   </p>
                 </div>
                 <div className="settings-control">
@@ -904,7 +969,7 @@ export default function App() {
                     step={1}
                     value={appDraft.fastcgi_timeout_secs}
                     disabled={!!busy}
-                    aria-label="Segundos de espera de Nginx hacia PHP"
+                    aria-label={t("nginxWaitAria")}
                     onChange={(e) => {
                       const n = Number(e.target.value);
                       setAppDraft((prev) =>
@@ -917,14 +982,51 @@ export default function App() {
                 </div>
               </div>
             </section>
+            </div>
+
+            <div
+              role="tabpanel"
+              id="settings-panel-general"
+              aria-labelledby="settings-tab-general"
+              className={settingsTab === "general" ? "is-active" : undefined}
+              inert={settingsTab === "general" ? undefined : true}
+            >
+            <section className="settings-section">
+              <h3 className="settings-section-title">{t("tabGeneral")}</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("langLabel")}</span>
+                  <p className="settings-desc">{t("langDesc")}</p>
+                </div>
+                <div className="settings-control">
+                  <select
+                    className="settings-lang"
+                    value={lang}
+                    aria-label={t("langLabel")}
+                    onChange={(e) => {
+                      const next = LANG_OPTIONS.find((option) => option.id === e.target.value);
+                      if (next) setLang(next.id);
+                    }}
+                  >
+                    {LANG_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </section>
+            </div>
+            </div>
 
             {appError && <p className="modal-error">{appError}</p>}
             <div className="modal-actions">
               <button type="button" disabled={!!busy} onClick={() => setAppOpen(false)}>
-                Cancelar
+                {t("cancel")}
               </button>
               <button type="button" className="go" disabled={!!busy} onClick={saveApp}>
-                Guardar
+                {t("save")}
               </button>
             </div>
           </div>
@@ -944,15 +1046,15 @@ export default function App() {
             aria-labelledby="db-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="db-modal-title">Base de datos</h2>
+            <h2 id="db-modal-title">{t("dbTitle")}</h2>
             <p className="modal-hint">
-              Por defecto: usuario <code>root</code> sin contraseña (solo 127.0.0.1). Puedes
-              cambiarlos; se guardan en secrets (fuera de git) y se aplican a MariaDB si está
-              en marcha.
+              {t("dbHintBefore")}
+              <code>root</code>
+              {t("dbHintAfter")}
             </p>
             <div className="db-form">
               <label>
-                <span>Usuario</span>
+                <span>{t("user")}</span>
                 <input
                   type="text"
                   autoComplete="off"
@@ -965,14 +1067,14 @@ export default function App() {
                 />
               </label>
               <label>
-                <span>Contraseña</span>
+                <span>{t("password")}</span>
                 <div className="db-pass-row">
                   <input
                     type={showDbPassword ? "text" : "password"}
                     autoComplete="new-password"
                     value={dbDraft.password}
                     disabled={!!busy}
-                    placeholder="(vacía = sin contraseña)"
+                    placeholder={t("passwordPlaceholder")}
                     onChange={(e) =>
                       setDbDraft((prev) =>
                         prev ? { ...prev, password: e.target.value } : prev,
@@ -984,7 +1086,7 @@ export default function App() {
                     disabled={!!busy}
                     onClick={() => setShowDbPassword((v) => !v)}
                   >
-                    {showDbPassword ? "Ocultar" : "Ver"}
+                    {showDbPassword ? t("hide") : t("show")}
                   </button>
                 </div>
               </label>
@@ -999,14 +1101,14 @@ export default function App() {
                   )
                 }
               >
-                Restablecer default
+                {t("resetDefault")}
               </button>
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" disabled={!!busy} onClick={() => setDbOpen(false)}>
-                  Cancelar
+                  {t("cancel")}
                 </button>
                 <button type="button" className="go" disabled={!!busy} onClick={saveDb}>
-                  Guardar
+                  {t("save")}
                 </button>
               </div>
             </div>
@@ -1028,14 +1130,17 @@ export default function App() {
             aria-labelledby="ext-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="ext-modal-title">Extensiones PHP</h2>
+            <h2 id="ext-modal-title">{t("extTitle")}</h2>
             <p className="modal-hint">
-              Lista de <code>ext/*.dll</code>. Si un DLL no está en php.ini, PHP no lo carga; al
-              activarlo aquí se escribe <code>extension=…</code> y se reinicia PHP-FPM.
+              {t("extHintBefore")}
+              <code>ext/*.dll</code>
+              {t("extHintMid")}
+              <code>extension=…</code>
+              {t("extHintAfter")}
             </p>
             <input
               className="ext-filter"
-              placeholder="filtrar…"
+              placeholder={t("filterPlaceholder")}
               value={extFilter}
               onChange={(e) => setExtFilter(e.target.value)}
               disabled={!!busy}
@@ -1069,16 +1174,16 @@ export default function App() {
                   </label>
                 ))}
               {!extList.length && (
-                <p className="empty">No hay DLL en ext/ (¿PHP instalado?)</p>
+                <p className="empty">{t("extEmpty")}</p>
               )}
             </div>
             {extError && <p className="modal-error">{extError}</p>}
             <div className="modal-actions">
               <button type="button" disabled={!!busy} onClick={() => setExtOpen(false)}>
-                Cancelar
+                {t("cancel")}
               </button>
               <button type="button" className="go" disabled={!!busy} onClick={saveExt}>
-                Guardar y reiniciar PHP
+                {t("saveRestartPhp")}
               </button>
             </div>
           </div>
@@ -1094,38 +1199,40 @@ export default function App() {
             aria-labelledby="mcp-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="mcp-modal-title">MCP de logs</h2>
+            <h2 id="mcp-modal-title">{t("mcpTitle")}</h2>
             <p className="modal-hint">
-              No se enciende con Start. Cursor (u otro cliente) lo lanza cuando lo agregas. Sirve para que el agente lea errores de <code>logs/</code> sin abrir los archivos a mano.
+              {t("mcpHintBefore")}
+              <code>logs/</code>
+              {t("mcpHintAfter")}
             </p>
             <ol className="mcp-steps">
               <li>
                 {mcpInfo?.exists
-                  ? "El exe ya está junto a la instalación. Sigue con el JSON."
+                  ? t("mcpStepReady")
                   : mcpInfo?.can_build
-                    ? "En este repo todavía no está el release. Pulsa Generar exe."
-                    : "No se incluyó al instalar. Vuelve a ejecutar el instalador y acepta dejar devkit-mcp.exe."}
+                    ? t("mcpStepBuild")
+                    : t("mcpStepMissing")}
               </li>
               <li>
-                En Cursor: Settings → MCP, o crea <code>.cursor/mcp.json</code> en el proyecto con este contenido.
+                {t("mcpStepJsonBefore")}
+                <code>.cursor/mcp.json</code>
+                {t("mcpStepJsonAfter")}
               </li>
-              <li>Reinicia los servidores MCP. Quedan tres herramientas: list, tail y search.</li>
+              <li>{t("mcpStepTools")}</li>
             </ol>
             {mcpInfo && !mcpInfo.exists && !mcpInfo.can_build && (
-              <p className="modal-error">
-                Esta instalación no trae el código para compilarlo. El exe se genera al armar el instalador; ahí se pregunta si se deja.
-              </p>
+              <p className="modal-error">{t("mcpBuildError")}</p>
             )}
             <pre className="mcp-snippet">{mcpCursorJson(mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit"))}</pre>
             <p className="modal-hint">
-              Comando: <code>{mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit")}</code>
+              {t("mcpCommand")} <code>{mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit")}</code>
             </p>
             <p className="modal-hint">
-              Sin Cursor: <code>devkit logs list</code>, <code>devkit logs tail php</code>, <code>devkit logs search nginx-error emerg</code>.
+              {t("mcpCliBefore")} <code>devkit logs list</code>, <code>devkit logs tail php</code>, <code>devkit logs search nginx-error emerg</code>.
             </p>
             <div className="modal-actions">
               <button type="button" onClick={() => setMcpOpen(false)}>
-                Cerrar
+                {t("close")}
               </button>
               {!mcpInfo?.exists && mcpInfo?.can_build && (
                 <button
@@ -1141,7 +1248,7 @@ export default function App() {
                     })
                   }
                 >
-                  {busy === "mcp" ? "Generando…" : "Generar exe"}
+                  {busy === "mcp" ? t("generating") : t("generateExe")}
                 </button>
               )}
               <button
@@ -1152,12 +1259,12 @@ export default function App() {
                     mcpInfo?.path ?? mcpExe(stack?.root ?? "C:\\DevKit")
                   );
                   void navigator.clipboard.writeText(json).then(
-                    () => setLog("JSON de MCP copiado"),
-                    () => setLog("no se pudo copiar el JSON")
+                    () => setLog(t("mcpCopied")),
+                    () => setLog(t("mcpCopyFail"))
                   );
                 }}
               >
-                Copiar JSON
+                {t("copyJson")}
               </button>
             </div>
           </div>

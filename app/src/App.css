@@ -219,6 +219,40 @@ button:disabled { opacity: 0.5; cursor: wait; }
   letter-spacing: 0.02em;
 }
 .settings-head .modal-hint { margin-bottom: 14px; }
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--dim);
+  padding: 10px 12px;
+  letter-spacing: 0.12em;
+}
+.settings-tabs button.on {
+  color: var(--amber);
+  border-bottom-color: var(--amber);
+}
+.settings-body {
+  display: grid;
+}
+.settings-body > [role="tabpanel"] {
+  grid-area: 1 / 1;
+}
+.settings-body > [role="tabpanel"]:not(.is-active) {
+  visibility: hidden;
+}
+.settings-lang {
+  min-width: 148px;
+  background: #0c0e10;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
 .settings-section {
   padding: 14px 22px;
   border-bottom: 1px solid #1e242b;
