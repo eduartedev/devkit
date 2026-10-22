@@ -1,6 +1,6 @@
 use devkit_core::{
-    build_mcp_release, mcp_exe_info, terminal, watch, AppConfig, AppSettings, DbCredentials,
-    DevKit, McpExeInfo, Paths, PhpExtensionInfo, PortsSettings, StackStatus,
+    build_mcp_release, mcp_exe_info, terminal, watch, AppConfig, AppSettings, AutoStartMode,
+    DbCredentials, DevKit, McpExeInfo, Paths, PhpExtensionInfo, PortsSettings, StackStatus,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -313,13 +313,17 @@ async fn get_app_settings(state: State<'_, KitState>) -> Result<AppSettings, Str
 
 #[tauri::command]
 async fn update_app_settings(
+    app: AppHandle,
     state: State<'_, KitState>,
     settings: AppSettings,
 ) -> Result<String, String> {
-    with_heavy(&state, "app-settings", move |kit| {
+    let launch_at_login = settings.launch_at_login;
+    let msg = with_heavy(&state, "app-settings", move |kit| {
         kit.update_app_settings(settings).map_err(map_err)
     })
-    .await
+    .await?;
+    sync_launch_at_login(&app, launch_at_login)?;
+    Ok(msg)
 }
 
 #[tauri::command]
@@ -389,6 +393,53 @@ fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+#[cfg(desktop)]
+fn sync_launch_at_login(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable().map_err(map_err)?;
+    } else {
+        autolaunch.disable().map_err(map_err)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+fn sync_launch_at_login(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
+fn apply_startup_on_launch(app: &AppHandle, state: &KitState) {
+    let settings = AppSettings::from_config(&state.snap.lock().config);
+    if settings.start_hidden {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+    }
+    #[cfg(desktop)]
+    if let Err(e) = sync_launch_at_login(app, settings.launch_at_login) {
+        eprintln!("DevKit autostart: {e}");
+    }
+    match settings.auto_start_mode {
+        AutoStartMode::Off => {}
+        AutoStartMode::All => {
+            tray_run_heavy(state, "start", |kit| {
+                let _ = kit.start_all(true);
+            });
+        }
+        AutoStartMode::Selected => {
+            let ids = settings.auto_start_services;
+            if ids.is_empty() {
+                return;
+            }
+            tray_run_heavy(state, "start", move |kit| {
+                let _ = kit.start_services(&ids, true);
+            });
+        }
     }
 }
 
@@ -466,6 +517,14 @@ pub fn run() {
             open_in_browser
         ])
         .setup(|app| {
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_autostart::MacosLauncher;
+                app.handle()
+                    .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+                    .map_err(|e| e.to_string())?;
+            }
+
             let show = MenuItem::with_id(app, "show", "Abrir panel", true, None::<&str>)?;
             let start = MenuItem::with_id(app, "start", "Start All", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop All", true, None::<&str>)?;
@@ -541,6 +600,9 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            if let Some(s) = app.try_state::<KitState>() {
+                apply_startup_on_launch(app.handle(), &*s);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

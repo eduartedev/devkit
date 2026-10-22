@@ -755,6 +755,19 @@ impl DevKit {
     }
 
     pub fn start_all(&mut self, detach: bool) -> Result<StackStatus> {
+        let ids = crate::paths::AUTO_START_SERVICE_IDS
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>();
+        self.start_services(&ids, detach)
+    }
+
+    /// Arranca un subconjunto de servicios (orden fijo; DNS/hosts una vez).
+    pub fn start_services(&mut self, ids: &[String], detach: bool) -> Result<StackStatus> {
+        let ordered = crate::paths::ordered_auto_start_ids(ids);
+        if ordered.is_empty() {
+            return self.status();
+        }
         self.paths.ensure()?;
         eprintln!("devkit: preparando sitios…");
         self.reload_sites()?;
@@ -770,20 +783,18 @@ impl DevKit {
             }
         }
 
-        if self.paths.mysqld().exists() {
+        if ordered.iter().any(|id| id == "mariadb") && self.paths.mysqld().exists() {
             if let Err(e) = self.init_mariadb_if_needed() {
                 warnings.push(format!("MariaDB init: {e}"));
             }
         }
 
-        let order = ["mariadb", "php", "nginx", "redis", "mailpit"];
         let specs = self.specs()?;
-        for id in order {
-            if let Some(spec) = specs.iter().find(|s| s.id == id).cloned() {
-                // Skip spawn if already conflicted — avoid noisy double errors.
+        for id in &ordered {
+            if let Some(spec) = specs.iter().find(|s| s.id == *id).cloned() {
                 let blocked = port_checks
                     .iter()
-                    .find(|c| c.service == id)
+                    .find(|c| c.service == *id)
                     .is_some_and(|c| c.is_conflict());
                 if blocked {
                     continue;
@@ -799,7 +810,9 @@ impl DevKit {
                 }
             }
         }
-        if crate::health::is_port_open(&self.config.bind, self.config.mysql_port) {
+        if ordered.iter().any(|id| id == "mariadb")
+            && crate::health::is_port_open(&self.config.bind, self.config.mysql_port)
+        {
             if let Err(e) = self.set_mysql_password_if_needed() {
                 warnings.push(format!("MariaDB credenciales: {e}"));
             }

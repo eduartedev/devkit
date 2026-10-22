@@ -30,7 +30,7 @@ pub use error::{Error, Result};
 pub use kit::DevKit;
 pub use mcp_build::{build_mcp_release, mcp_exe_info, McpExeInfo};
 pub use model::*;
-pub use paths::{AppConfig, AppSettings, Paths};
+pub use paths::{AppConfig, AppSettings, AutoStartMode, Paths};
 pub use php::PhpExtensionInfo;
 pub use secrets::DbCredentials;
 pub use ports::{PortCheck, PortOwner, PortProcess, PortsSettings};

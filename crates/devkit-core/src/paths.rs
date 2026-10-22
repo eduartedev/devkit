@@ -226,6 +226,27 @@ pub struct AppConfig {
     /// Segundos de `fastcgi_read_timeout` y `fastcgi_send_timeout` en cada `location ~ \.php$`.
     #[serde(default = "default_fastcgi_timeout")]
     pub fastcgi_timeout_secs: u64,
+    #[serde(default)]
+    pub launch_at_login: bool,
+    #[serde(default)]
+    pub start_hidden: bool,
+    #[serde(default)]
+    pub auto_start_mode: AutoStartMode,
+    #[serde(default)]
+    pub auto_start_services: Vec<String>,
+}
+
+/// IDs de servicios que se pueden auto-arrancar al abrir el panel.
+pub const AUTO_START_SERVICE_IDS: [&str; 5] =
+    ["mariadb", "php", "nginx", "redis", "mailpit"];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoStartMode {
+    #[default]
+    Off,
+    All,
+    Selected,
 }
 
 fn default_true() -> bool {
@@ -276,6 +297,10 @@ impl Default for AppConfig {
             php_extensions: default_php_extensions(),
             follow_www_junctions: true,
             fastcgi_timeout_secs: default_fastcgi_timeout(),
+            launch_at_login: false,
+            start_hidden: false,
+            auto_start_mode: AutoStartMode::Off,
+            auto_start_services: Vec::new(),
         }
     }
 }
@@ -305,11 +330,24 @@ impl AppConfig {
 }
 
 /// Ajustes de la app DevKit (no puertos ni secretos de DB).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub tld: String,
     pub follow_www_junctions: bool,
     pub fastcgi_timeout_secs: u64,
+    pub launch_at_login: bool,
+    pub start_hidden: bool,
+    pub auto_start_mode: AutoStartMode,
+    pub auto_start_services: Vec<String>,
+}
+
+/// Filtra y ordena IDs de auto-arranque (orden del stack).
+pub fn ordered_auto_start_ids(requested: &[String]) -> Vec<String> {
+    AUTO_START_SERVICE_IDS
+        .iter()
+        .filter(|id| requested.iter().any(|r| r == *id))
+        .map(|id| id.to_string())
+        .collect()
 }
 
 impl AppSettings {
@@ -318,6 +356,10 @@ impl AppSettings {
             tld: cfg.tld.clone(),
             follow_www_junctions: cfg.follow_www_junctions,
             fastcgi_timeout_secs: cfg.fastcgi_timeout_secs,
+            launch_at_login: cfg.launch_at_login,
+            start_hidden: cfg.start_hidden,
+            auto_start_mode: cfg.auto_start_mode.clone(),
+            auto_start_services: cfg.auto_start_services.clone(),
         }
     }
 
@@ -345,6 +387,11 @@ impl AppSettings {
                 "tiempo de espera PHP debe estar entre {FASTCGI_TIMEOUT_MIN} y {FASTCGI_TIMEOUT_MAX} segundos"
             )));
         }
+        for id in &self.auto_start_services {
+            if !AUTO_START_SERVICE_IDS.contains(&id.as_str()) {
+                return Err(Error::msg(format!("servicio de auto-arranque inválido: {id}")));
+            }
+        }
         Ok(())
     }
 
@@ -352,6 +399,10 @@ impl AppSettings {
         cfg.tld = self.tld.trim().to_ascii_lowercase();
         cfg.follow_www_junctions = self.follow_www_junctions;
         cfg.fastcgi_timeout_secs = self.fastcgi_timeout_secs;
+        cfg.launch_at_login = self.launch_at_login;
+        cfg.start_hidden = self.start_hidden;
+        cfg.auto_start_mode = self.auto_start_mode.clone();
+        cfg.auto_start_services = ordered_auto_start_ids(&self.auto_start_services);
     }
 }
 
@@ -380,5 +431,47 @@ mod tests {
         assert!(settings.validate().is_err());
         settings.fastcgi_timeout_secs = 3600;
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn old_config_without_startup_fields_uses_defaults() {
+        let raw = toml::to_string(&AppConfig::default()).unwrap();
+        let stripped = raw
+            .lines()
+            .filter(|line| {
+                !line.contains("launch_at_login")
+                    && !line.contains("start_hidden")
+                    && !line.contains("auto_start")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cfg: AppConfig = toml::from_str(&stripped).unwrap();
+        assert!(!cfg.launch_at_login);
+        assert!(!cfg.start_hidden);
+        assert_eq!(cfg.auto_start_mode, AutoStartMode::Off);
+        assert!(cfg.auto_start_services.is_empty());
+    }
+
+    #[test]
+    fn ordered_auto_start_ids_filters_and_sorts() {
+        let ids = ordered_auto_start_ids(&[
+            "mailpit".into(),
+            "bogus".into(),
+            "nginx".into(),
+            "mariadb".into(),
+        ]);
+        assert_eq!(
+            ids,
+            ["mariadb", "nginx", "mailpit"]
+                .map(String::from)
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_auto_start_service() {
+        let mut settings = AppSettings::from_config(&AppConfig::default());
+        settings.auto_start_services = vec!["docker".into()];
+        assert!(settings.validate().is_err());
     }
 }

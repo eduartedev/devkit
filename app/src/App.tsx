@@ -62,11 +62,19 @@ type PhpExtensionInfo = {
   enabled: boolean;
 };
 
+type AutoStartMode = "off" | "all" | "selected";
+
 type AppSettings = {
   tld: string;
   follow_www_junctions: boolean;
   fastcgi_timeout_secs: number;
+  launch_at_login: boolean;
+  start_hidden: boolean;
+  auto_start_mode: AutoStartMode;
+  auto_start_services: string[];
 };
+
+const AUTO_START_SERVICE_IDS = ["mariadb", "php", "nginx", "redis", "mailpit"] as const;
 
 type Stack = {
   root: string;
@@ -991,6 +999,115 @@ export default function App() {
               className={settingsTab === "general" ? "is-active" : undefined}
               inert={settingsTab === "general" ? undefined : true}
             >
+            <section className="settings-section">
+              <h3 className="settings-section-title">{t("sectionStartup")}</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("launchAtLogin")}</span>
+                  <p className="settings-desc">{t("launchAtLoginDesc")}</p>
+                </div>
+                <div className="settings-control">
+                  <button
+                    type="button"
+                    role="switch"
+                    className={appDraft.launch_at_login ? "switch on" : "switch"}
+                    aria-checked={appDraft.launch_at_login}
+                    disabled={!!busy}
+                    onClick={() =>
+                      setAppDraft((prev) =>
+                        prev ? { ...prev, launch_at_login: !prev.launch_at_login } : prev,
+                      )
+                    }
+                  >
+                    <span className="switch-knob" />
+                    <span className="switch-text">
+                      {appDraft.launch_at_login ? t("yes") : t("no")}
+                    </span>
+                  </button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("startHidden")}</span>
+                  <p className="settings-desc">{t("startHiddenDesc")}</p>
+                </div>
+                <div className="settings-control">
+                  <button
+                    type="button"
+                    role="switch"
+                    className={appDraft.start_hidden ? "switch on" : "switch"}
+                    aria-checked={appDraft.start_hidden}
+                    disabled={!!busy}
+                    onClick={() =>
+                      setAppDraft((prev) =>
+                        prev ? { ...prev, start_hidden: !prev.start_hidden } : prev,
+                      )
+                    }
+                  >
+                    <span className="switch-knob" />
+                    <span className="switch-text">
+                      {appDraft.start_hidden ? t("yes") : t("no")}
+                    </span>
+                  </button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("autoStartLabel")}</span>
+                  <p className="settings-desc">{t("autoStartDesc")}</p>
+                </div>
+                <div className="settings-control">
+                  <select
+                    className="settings-lang"
+                    value={appDraft.auto_start_mode}
+                    aria-label={t("autoStartLabel")}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      const mode = e.target.value as AutoStartMode;
+                      setAppDraft((prev) =>
+                        prev ? { ...prev, auto_start_mode: mode } : prev,
+                      );
+                    }}
+                  >
+                    <option value="off">{t("autoStartOff")}</option>
+                    <option value="all">{t("autoStartAll")}</option>
+                    <option value="selected">{t("autoStartSelected")}</option>
+                  </select>
+                </div>
+              </div>
+              {appDraft.auto_start_mode === "selected" && (
+                <div className="settings-row settings-row-stack">
+                  <ul className="auto-start-services">
+                    {AUTO_START_SERVICE_IDS.map((id) => {
+                      const svc = stack?.services.find((s) => s.id === id);
+                      const label = svc?.display_name ?? id;
+                      const on = appDraft.auto_start_services.includes(id);
+                      return (
+                        <li key={id}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={!!busy}
+                              onChange={() =>
+                                setAppDraft((prev) => {
+                                  if (!prev) return prev;
+                                  const next = prev.auto_start_services.includes(id)
+                                    ? prev.auto_start_services.filter((x) => x !== id)
+                                    : [...prev.auto_start_services, id];
+                                  return { ...prev, auto_start_services: next };
+                                })
+                              }
+                            />
+                            {label}
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </section>
             <section className="settings-section">
               <h3 className="settings-section-title">{t("tabGeneral")}</h3>
               <div className="settings-row">

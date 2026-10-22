@@ -19,6 +19,11 @@ follow_www_junctions = true
 # Segundos que Nginx espera a PHP (fastcgi_read_timeout / fastcgi_send_timeout).
 # 60 es el defecto de Nginx. Instaladores largos (Duplicator) suelen necesitar 3600.
 fastcgi_timeout_secs = 60
+# Panel: abrir con Windows, oculto en bandeja, auto-arranque del stack (off | all | selected).
+launch_at_login = false
+start_hidden = false
+auto_start_mode = "off"
+auto_start_services = []
 php_extensions = [
     "mysqli",
     "pdo_mysql",
