@@ -114,18 +114,63 @@ fn unwrap_single_dir(dest: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn github_latest_asset(repo: &str, name_contains: &[&str]) -> Result<(String, Option<String>)> {
+fn github_latest_body(repo: &str) -> Result<String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .user_agent("DevKit/0.1")
         .build();
-    let body = agent
+    agent
         .get(&url)
         .call()
         .map_err(|e| Error::Http(format!("{url}: {e}")))?
         .into_string()
-        .map_err(|e| Error::Http(e.to_string()))?;
+        .map_err(|e| Error::Http(e.to_string()))
+}
+
+/// MinGit portable de 64 bits. Excluye busybox y arm64.
+pub fn is_mingit_64_zip(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("mingit-")
+        && lower.ends_with("-64-bit.zip")
+        && !lower.contains("busybox")
+}
+
+/// Elige el zip MinGit 64-bit del JSON de un release y exige `digest` sha256.
+pub fn pick_mingit_zip(body: &str) -> Result<(String, String)> {
+    let json: serde_json::Value = serde_json::from_str(body)?;
+    let assets = json
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| Error::msg("release de git sin assets"))?;
+    for asset in assets {
+        let name = asset.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if !is_mingit_64_zip(name) {
+            continue;
+        }
+        let url = asset
+            .get("browser_download_url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| Error::msg("MinGit sin url"))?;
+        let sha = asset
+            .get("digest")
+            .and_then(|d| d.as_str())
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+            .ok_or_else(|| Error::msg(format!("MinGit {name} sin sha256")))?;
+        return Ok((url.to_string(), sha.to_string()));
+    }
+    Err(Error::msg(
+        "no hay MinGit 64-bit.zip en el release de git-for-windows",
+    ))
+}
+
+pub fn git_mingit_zip() -> Result<(String, String)> {
+    pick_mingit_zip(&github_latest_body("git-for-windows/git")?)
+}
+
+pub fn github_latest_asset(repo: &str, name_contains: &[&str]) -> Result<(String, Option<String>)> {
+    let body = github_latest_body(repo)?;
     let json: serde_json::Value = serde_json::from_str(&body)?;
     let assets = json
         .get("assets")
@@ -275,6 +320,23 @@ mod tests {
             archive.write_all(bytes).unwrap();
         }
         archive.finish().unwrap();
+    }
+
+    #[test]
+    fn pick_mingit_zip_skips_busybox_and_requires_sha256() {
+        let body = r#"{
+            "assets": [
+                {"name": "MinGit-2.56.0.3-busybox-64-bit.zip", "browser_download_url": "https://example.test/busy.zip", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                {"name": "MinGit-2.56.0.3-arm64.zip", "browser_download_url": "https://example.test/arm.zip", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                {"name": "MinGit-2.56.0.3-64-bit.zip", "browser_download_url": "https://example.test/mingit.zip", "digest": "sha256:2e5619966e588fde5f8122c5557cad50c0fbafcaed736689f40ec1dfb1d78ea7"}
+            ]
+        }"#;
+        let (url, sha) = pick_mingit_zip(body).unwrap();
+        assert_eq!(url, "https://example.test/mingit.zip");
+        assert_eq!(sha, "2e5619966e588fde5f8122c5557cad50c0fbafcaed736689f40ec1dfb1d78ea7");
+
+        let missing_sha = r#"{"assets":[{"name":"MinGit-2.56.0.3-64-bit.zip","browser_download_url":"https://example.test/mingit.zip"}]}"#;
+        assert!(pick_mingit_zip(missing_sha).is_err());
     }
 
     #[test]
