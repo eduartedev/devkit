@@ -52,6 +52,15 @@ enum Commands {
     },
     /// Terminal con PATH de DevKit
     Terminal,
+    /// Añade PHP, MariaDB, Node, Git y Composer al PATH de Windows
+    Path {
+        /// Quita las carpetas de este DevKit del PATH (usuario y sistema)
+        #[arg(long)]
+        off: bool,
+        /// PATH del sistema para todos los usuarios (ejecuta como administrador)
+        #[arg(long)]
+        all_users: bool,
+    },
     /// Credenciales locales de MariaDB
     Db {
         #[command(subcommand)]
@@ -200,6 +209,25 @@ fn run() -> devkit_core::Result<()> {
         Commands::Ssl => println!("{}", kit.enable_ssl()?),
         Commands::Pack { out } => println!("{}", kit.pack(out)?.display()),
         Commands::Terminal => kit.open_terminal()?,
+        Commands::Path { off, all_users } => {
+            if off {
+                kit.path_remove()?;
+                println!(
+                    "PATH: entradas de DevKit quitadas. Abre una terminal nueva para ver el cambio."
+                );
+            } else {
+                let dirs = kit.path_apply(all_users)?;
+                let scope = if all_users {
+                    "todos los usuarios (sistema)"
+                } else {
+                    "tu usuario"
+                };
+                println!("PATH actualizado ({scope}). Abre una terminal nueva.");
+                for d in dirs {
+                    println!("  {d}");
+                }
+            }
+        }
         Commands::Db { cmd } => match cmd {
             DbCmd::Status => {
                 let c = kit.db_credentials()?;

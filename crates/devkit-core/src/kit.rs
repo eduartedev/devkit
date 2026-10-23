@@ -932,6 +932,7 @@ impl DevKit {
         if was_running {
             self.start_service("php", true)?;
         }
+        let _ = crate::path_env::sync_configured(&self.paths, &self.config);
         Ok(())
     }
 
@@ -1063,6 +1064,25 @@ impl DevKit {
         terminal::isolated_path(&self.paths, &self.config)
     }
 
+    pub fn path_apply(&mut self, all_users: bool) -> Result<Vec<String>> {
+        let scope = if all_users {
+            crate::paths::PathEnvScope::Machine
+        } else {
+            crate::paths::PathEnvScope::User
+        };
+        let dirs = crate::path_env::apply(&self.paths, &self.config, scope)?;
+        self.config.path_scope = scope;
+        self.config.save(&self.paths.config_file())?;
+        Ok(dirs)
+    }
+
+    pub fn path_remove(&mut self) -> Result<()> {
+        crate::path_env::remove_all(&self.paths)?;
+        self.config.path_scope = crate::paths::PathEnvScope::Off;
+        self.config.save(&self.paths.config_file())?;
+        Ok(())
+    }
+
     pub fn ports_config(&self) -> crate::ports::PortsSettings {
         crate::ports::PortsSettings::from_config(&self.config)
     }
@@ -1082,13 +1102,29 @@ impl DevKit {
         crate::paths::AppSettings::from_config(&self.config)
     }
 
+    fn apply_path_scope_change(&self, prev: crate::paths::PathEnvScope) -> Result<()> {
+        use crate::paths::PathEnvScope;
+        let new = self.config.path_scope;
+        if prev == new {
+            return Ok(());
+        }
+        if new == PathEnvScope::Off {
+            crate::path_env::remove_all(&self.paths)?;
+        } else {
+            crate::path_env::apply(&self.paths, &self.config, new)?;
+        }
+        Ok(())
+    }
+
     /// Guarda ajustes de la app, regenera vhosts y actualiza hosts.
     pub fn update_app_settings(
         &mut self,
         settings: crate::paths::AppSettings,
     ) -> Result<String> {
         settings.validate()?;
+        let prev_path = self.config.path_scope;
         settings.apply_to(&mut self.config);
+        self.apply_path_scope_change(prev_path)?;
         self.config.save(&self.paths.config_file())?;
         let sites = self.reload_sites()?;
         let _ = self.ensure_hosts();

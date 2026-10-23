@@ -247,6 +247,18 @@ pub struct AppConfig {
     pub auto_start_mode: AutoStartMode,
     #[serde(default)]
     pub auto_start_services: Vec<String>,
+    /// PATH de Windows: off | user | machine (todos los usuarios, requiere admin).
+    #[serde(default)]
+    pub path_scope: PathEnvScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PathEnvScope {
+    #[default]
+    Off,
+    User,
+    Machine,
 }
 
 /// IDs de servicios que se pueden auto-arrancar al abrir el panel.
@@ -314,6 +326,7 @@ impl Default for AppConfig {
             start_hidden: false,
             auto_start_mode: AutoStartMode::Off,
             auto_start_services: Vec::new(),
+            path_scope: PathEnvScope::Off,
         }
     }
 }
@@ -352,6 +365,7 @@ pub struct AppSettings {
     pub start_hidden: bool,
     pub auto_start_mode: AutoStartMode,
     pub auto_start_services: Vec<String>,
+    pub path_scope: PathEnvScope,
 }
 
 /// Filtra y ordena IDs de auto-arranque (orden del stack).
@@ -373,6 +387,7 @@ impl AppSettings {
             start_hidden: cfg.start_hidden,
             auto_start_mode: cfg.auto_start_mode.clone(),
             auto_start_services: cfg.auto_start_services.clone(),
+            path_scope: cfg.path_scope,
         }
     }
 
@@ -416,6 +431,7 @@ impl AppSettings {
         cfg.start_hidden = self.start_hidden;
         cfg.auto_start_mode = self.auto_start_mode.clone();
         cfg.auto_start_services = ordered_auto_start_ids(&self.auto_start_services);
+        cfg.path_scope = self.path_scope;
     }
 }
 

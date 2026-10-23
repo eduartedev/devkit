@@ -29,7 +29,8 @@ export const en: Record<MessageKey, string> = {
   badgeOurs: "DevKit",
   badgeBusy: "busy",
   terminal: "Terminal",
-  terminalTitle: "Opens cmd/Terminal with the DevKit PATH (php, composer, mysql…)",
+  terminalTitle:
+    "Opens cmd/Terminal with the DevKit PATH (php, composer, mysql, node, git…)",
   mailpitTitle: "Opens the Mailpit inbox",
   more: "More…",
   groupDevkit: "DevKit",
@@ -143,6 +144,13 @@ export const en: Record<MessageKey, string> = {
   tabSites: "Sites",
   tabPhp: "PHP",
   tabGeneral: "General",
+  sectionWindowsPath: "Windows PATH",
+  pathScopeLabel: "Tools on PATH",
+  pathScopeDesc:
+    "Adds php, mysql, node, git, and composer to PATH. “All users” requires running the panel or devkit as administrator.",
+  pathScopeOff: "No",
+  pathScopeUser: "My user only",
+  pathScopeMachine: "All users",
   sectionStartup: "Startup",
   launchAtLogin: "Open when Windows starts",
   launchAtLoginDesc: "Registers DevKit to launch when you sign in.",

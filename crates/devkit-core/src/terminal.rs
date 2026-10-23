@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::path_env;
 use crate::paths::{AppConfig, Paths};
 use std::process::Command;
 
@@ -10,21 +11,9 @@ use std::os::windows::process::CommandExt;
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
 pub fn isolated_path(paths: &Paths, cfg: &AppConfig) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let php = paths.php_dir(&cfg.php_version);
-    parts.push(php.to_string_lossy().into_owned());
-    let node = paths.bin.join("node");
-    if node.join("node.exe").exists() {
-        parts.push(node.to_string_lossy().into_owned());
-    }
-    let maria_bin = paths.bin.join("mariadb").join("bin");
-    if maria_bin.exists() {
-        parts.push(maria_bin.to_string_lossy().into_owned());
-    }
-    let composer_dir = paths.bin.join("composer");
-    parts.push(composer_dir.to_string_lossy().into_owned());
+    let prepend = path_env::devkit_path_dirs(paths, cfg);
     let orig = std::env::var("PATH").unwrap_or_default();
-    format!("{};{}", parts.join(";"), orig)
+    path_env::merge_path_entries(&prepend, &[orig])
 }
 
 /// Abre una sola consola `cmd` con PATH de DevKit y cwd en la raíz del kit.

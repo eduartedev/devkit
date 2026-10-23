@@ -27,7 +27,8 @@ export const es = {
   badgeOurs: "DevKit",
   badgeBusy: "ocupado",
   terminal: "Terminal",
-  terminalTitle: "Abre cmd/Terminal con PATH de DevKit (php, composer, mysql…)",
+  terminalTitle:
+    "Abre cmd/Terminal con PATH de DevKit (php, composer, mysql, node, git…)",
   mailpitTitle: "Abre la bandeja de correo de Mailpit",
   more: "Más…",
   groupDevkit: "DevKit",
@@ -145,6 +146,13 @@ export const es = {
   tabSites: "Sitios",
   tabPhp: "PHP",
   tabGeneral: "General",
+  sectionWindowsPath: "PATH de Windows",
+  pathScopeLabel: "Herramientas en PATH",
+  pathScopeDesc:
+    "Añade php, mysql, node, git y composer al PATH. «Todos los usuarios» requiere ejecutar el panel o devkit como administrador.",
+  pathScopeOff: "No",
+  pathScopeUser: "Solo mi usuario",
+  pathScopeMachine: "Todos los usuarios",
   sectionStartup: "Arranque",
   launchAtLogin: "Abrir al iniciar Windows",
   launchAtLoginDesc: "Registra DevKit para que se abra al iniciar sesión.",
