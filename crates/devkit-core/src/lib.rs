@@ -15,6 +15,7 @@ pub mod nginx;
 pub mod pack;
 pub mod paths;
 pub mod php;
+pub mod php_version;
 pub mod ports;
 pub mod secrets;
 pub mod setup;

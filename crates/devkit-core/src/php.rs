@@ -156,6 +156,8 @@ pub fn build_devkit_php_block(
         "upload_max_filesize = 64M".into(),
         "post_max_size = 64M".into(),
         "memory_limit = 256M".into(),
+        // Mitigación php2shell / CVE-2026-109619 hasta parche aplicado (recomendación PHP).
+        "session.upload_progress.enabled = 0".into(),
         "display_errors = On".into(),
         "log_errors = On".into(),
         "error_reporting = E_ALL".into(),
@@ -400,6 +402,7 @@ mod tests {
         assert!(block.contains("; DevKit"));
         assert!(block.contains("error_log = \"C:/DevKit/logs/php_error.log\""));
         assert!(block.contains("log_errors = On"));
+        assert!(block.contains("session.upload_progress.enabled = 0"));
     }
 
     #[test]

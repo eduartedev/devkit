@@ -474,4 +474,27 @@ mod tests {
         settings.auto_start_services = vec!["docker".into()];
         assert!(settings.validate().is_err());
     }
+
+    #[test]
+    fn startup_settings_roundtrip_in_toml_and_apply() {
+        let mut cfg = AppConfig::default();
+        cfg.launch_at_login = true;
+        cfg.start_hidden = true;
+        cfg.auto_start_mode = AutoStartMode::Selected;
+        cfg.auto_start_services = vec!["nginx".into(), "php".into(), "mariadb".into()];
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let loaded: AppConfig = toml::from_str(&text).unwrap();
+        assert!(loaded.launch_at_login);
+        assert!(loaded.start_hidden);
+        assert_eq!(loaded.auto_start_mode, AutoStartMode::Selected);
+
+        let settings = AppSettings::from_config(&loaded);
+        assert!(settings.validate().is_ok());
+        let mut out = AppConfig::default();
+        settings.apply_to(&mut out);
+        assert_eq!(
+            out.auto_start_services,
+            ["mariadb", "php", "nginx"].map(String::from).to_vec()
+        );
+    }
 }

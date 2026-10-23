@@ -890,11 +890,25 @@ impl DevKit {
     }
 
     pub fn use_php(&mut self, version: &str) -> Result<()> {
+        if !crate::php_version::supported_php_major(version) {
+            return Err(Error::msg(format!(
+                "PHP {version} no soportado; majors: {}",
+                crate::php_version::SUPPORTED_PHP_MAJORS.join(", ")
+            )));
+        }
         let cgi = self.paths.php_cgi(version);
         if !cgi.exists() {
             return Err(Error::msg(format!(
                 "PHP {version} no está en {}. Ejecuta `devkit setup --php {version}`",
                 cgi.display()
+            )));
+        }
+        let installed = crate::php_version::read_installed_version(&self.paths.php_exe(version))
+            .or_else(|_| crate::php_version::read_installed_version(&cgi))?;
+        if !crate::php_version::meets_php2shell_minimum(&installed, version) {
+            let min = crate::php_version::minimum_secure_patch(version).unwrap_or("?");
+            return Err(Error::msg(format!(
+                "PHP {installed} no tiene el parche php2shell (mínimo {min}). Ejecuta `devkit setup --php {version}`"
             )));
         }
         let was_running = matches!(

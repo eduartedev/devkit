@@ -17,7 +17,7 @@ enum Commands {
         /// Redis, Mailpit y mkcert. Node va en el setup básico.
         #[arg(long)]
         full: bool,
-        /// Major de PHP (8.3 o 8.4)
+        /// Major de PHP (8.3, 8.4 o 8.5)
         #[arg(long)]
         php: Option<String>,
     },

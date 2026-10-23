@@ -70,8 +70,12 @@ fn install_components(
 ) -> Result<()> {
     install_nginx(paths, report)?;
     install_php(paths, php_major, cfg, report)?;
-    if full && php_major != "8.4" {
-        let _ = install_php(paths, "8.4", cfg, report);
+    if full {
+        for extra in crate::php_version::SUPPORTED_PHP_MAJORS {
+            if *extra != php_major {
+                let _ = install_php(paths, extra, cfg, report);
+            }
+        }
     }
     install_mariadb(paths, cfg, report)?;
     install_adminer(paths, report)?;
@@ -162,11 +166,35 @@ fn install_nginx(paths: &Paths, report: &mut SetupReport) -> Result<()> {
 }
 
 fn install_php(paths: &Paths, major: &str, cfg: &AppConfig, report: &mut SetupReport) -> Result<()> {
+    if !crate::php_version::supported_php_major(major) {
+        return Err(Error::msg(format!(
+            "PHP {major} no soportado; usa {}",
+            crate::php_version::SUPPORTED_PHP_MAJORS.join(", ")
+        )));
+    }
     let dir = paths.php_dir(major);
     if paths.php_cgi(major).exists() {
-        write_php_ini(paths, &dir, cfg)?;
-        report.push(format!("php {major}: ya instalado"));
-        return Ok(());
+        let installed = crate::php_version::read_installed_version(&paths.php_exe(major))
+            .or_else(|_| crate::php_version::read_installed_version(&paths.php_cgi(major)));
+        match installed {
+            Ok(ver) if crate::php_version::meets_php2shell_minimum(&ver, major) => {
+                write_php_ini(paths, &dir, cfg)?;
+                report.push(format!("php {major}: ya instalado ({ver}, parche php2shell OK)"));
+                return Ok(());
+            }
+            Ok(ver) => {
+                let min = crate::php_version::minimum_secure_patch(major).unwrap_or("?");
+                report.push(format!(
+                    "php {major}: {ver} < {min} (php2shell); actualizando…"
+                ));
+                fs::remove_dir_all(&dir)?;
+            }
+            Err(_) => {
+                write_php_ini(paths, &dir, cfg)?;
+                report.push(format!("php {major}: ya instalado"));
+                return Ok(());
+            }
+        }
     }
     report.push(format!("php {major}: consultando releases.json…"));
     let (ver, url, sha) = php_nts_from_releases(major)?;

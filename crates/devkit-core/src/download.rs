@@ -174,6 +174,7 @@ pub fn php_nts_from_releases(major: &str) -> Result<(String, String, String)> {
         .and_then(|v| v.as_str())
         .unwrap_or(major)
         .to_string();
+    crate::php_version::validate_downloaded_version(&version, major)?;
     let keys = ["nts-vs17-x64", "nts-vs16-x64", "nts-vc15-x64"];
     for key in keys {
         if let Some(zip) = rel.get(key).and_then(|k| k.get("zip")) {
