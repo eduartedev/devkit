@@ -63,6 +63,7 @@ type PhpExtensionInfo = {
 };
 
 type AutoStartMode = "off" | "all" | "selected";
+type PathEnvScope = "off" | "user" | "machine";
 
 type AppSettings = {
   tld: string;
@@ -72,6 +73,7 @@ type AppSettings = {
   start_hidden: boolean;
   auto_start_mode: AutoStartMode;
   auto_start_services: string[];
+  path_scope: PathEnvScope;
 };
 
 const AUTO_START_SERVICE_IDS = ["mariadb", "php", "nginx", "redis", "mailpit"] as const;
@@ -999,6 +1001,33 @@ export default function App() {
               className={settingsTab === "general" ? "is-active" : undefined}
               inert={settingsTab === "general" ? undefined : true}
             >
+            <section className="settings-section">
+              <h3 className="settings-section-title">{t("sectionWindowsPath")}</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("pathScopeLabel")}</span>
+                  <p className="settings-desc">{t("pathScopeDesc")}</p>
+                </div>
+                <div className="settings-control">
+                  <select
+                    className="settings-lang"
+                    value={appDraft.path_scope}
+                    aria-label={t("pathScopeLabel")}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      const path_scope = e.target.value as PathEnvScope;
+                      setAppDraft((prev) =>
+                        prev ? { ...prev, path_scope } : prev,
+                      );
+                    }}
+                  >
+                    <option value="off">{t("pathScopeOff")}</option>
+                    <option value="user">{t("pathScopeUser")}</option>
+                    <option value="machine">{t("pathScopeMachine")}</option>
+                  </select>
+                </div>
+              </div>
+            </section>
             <section className="settings-section">
               <h3 className="settings-section-title">{t("sectionStartup")}</h3>
               <div className="settings-row">

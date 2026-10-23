@@ -24,6 +24,8 @@ launch_at_login = false
 start_hidden = false
 auto_start_mode = "off"
 auto_start_services = []
+# PATH de Windows: off | user | machine (todos los usuarios; requiere admin al aplicar).
+path_scope = "off"
 php_extensions = [
     "mysqli",
     "pdo_mysql",
