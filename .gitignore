@@ -15,6 +15,7 @@
 /bin/mailpit/
 /bin/mkcert/
 /bin/node/
+/bin/git/
 /bin/composer/*.phar
 /data/**
 !/data/.gitkeep
