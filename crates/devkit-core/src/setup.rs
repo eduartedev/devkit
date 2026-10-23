@@ -1,6 +1,6 @@
 use crate::download::{
-    composer_latest, download_verified, github_latest_asset, node_lts_zip, php_nts_from_releases,
-    unzip_safe,
+    composer_latest, download_verified, git_mingit_zip, github_latest_asset, node_lts_zip,
+    php_nts_from_releases, unzip_safe,
 };
 use crate::error::{Error, Result};
 use crate::paths::{AppConfig, Paths};
@@ -38,11 +38,11 @@ pub fn run_setup(paths: &Paths, cfg: &AppConfig, full: bool, php_major: Option<&
     let mut used_bundle = false;
 
     if !full && prefer_bundled_stack(online, bundled) {
-        report.push("sin internet: usando Nginx, PHP, MariaDB, Composer y Node del instalador");
+        report.push("sin internet: usando Nginx, PHP, MariaDB, Composer, Node y Git del instalador");
         import_offline_bundle(&offline, paths)?;
         used_bundle = true;
     } else if !full && bundled {
-        report.push("hay internet: descargando Nginx, PHP, MariaDB, Composer y Node");
+        report.push("hay internet: descargando Nginx, PHP, MariaDB, Composer, Node y Git");
     }
 
     if let Err(err) = install_components(paths, cfg, full, php_major, &mut report) {
@@ -80,6 +80,7 @@ fn install_components(
     install_mariadb(paths, cfg, report)?;
     install_adminer(paths, report)?;
     install_node(paths, report)?;
+    install_git(paths, report)?;
 
     if full {
         install_redis(paths, cfg, report)?;
@@ -88,7 +89,7 @@ fn install_components(
         install_composer(paths, report)?;
     } else {
         install_composer(paths, report)?;
-        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer y Node). Setup completo añade Redis, Mailpit y mkcert");
+        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer, Node y Git). Setup completo añade Redis, Mailpit y mkcert");
     }
 
     let _ = crate::secrets::mysql_credentials(paths)?;
@@ -318,6 +319,23 @@ fn install_node(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     Ok(())
 }
 
+fn install_git(paths: &Paths, report: &mut SetupReport) -> Result<()> {
+    if paths.git_exe().is_file() {
+        report.push("git: ya instalado");
+        return Ok(());
+    }
+    report.push("git: consultando última estable…");
+    let (url, sha) = git_mingit_zip()?;
+    let zip = paths.tmp.join("MinGit-64-bit.zip");
+    download_verified(&url, &zip, Some(&sha))?;
+    unzip_safe(&zip, &paths.bin.join("git"))?;
+    if !paths.git_exe().is_file() {
+        return Err(Error::msg("git.exe no apareció en bin/git"));
+    }
+    report.push("git: instalado");
+    Ok(())
+}
+
 fn install_composer(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     if paths.composer().exists() {
         report.push("composer: ya instalado");
@@ -457,6 +475,8 @@ mod tests {
         write_file(&paths.php_cgi(&cfg.php_version), b"php");
         write_file(&paths.mysqld(), b"mysqld");
         write_file(&paths.composer(), b"composer");
+        write_file(&paths.bin.join("node").join("node.exe"), b"node");
+        write_file(&paths.bin.join("git").join("cmd").join("git.exe"), b"git");
         write_file(&paths.www.join("adminer").join("index.php"), b"<?php");
 
         let report = run_setup(&paths, &cfg, false, None).unwrap();
@@ -466,12 +486,36 @@ mod tests {
         assert!(text.contains("mariadb: ya instalado"), "{text}");
         assert!(text.contains("adminer: ya instalado"), "{text}");
         assert!(text.contains("composer: ya instalado"), "{text}");
+        assert!(text.contains("node: ya instalado"), "{text}");
+        assert!(text.contains("git: ya instalado"), "{text}");
         assert!(
             !text.to_ascii_lowercase().contains("descargando"),
             "{text}"
         );
         assert_eq!(fs::read(paths.nginx_exe()).unwrap(), b"nginx");
         assert_eq!(fs::read(paths.composer()).unwrap(), b"composer");
+    }
+
+    #[test]
+    fn git_exe_finds_cmd_then_bin_then_flat_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(root.path().join("kit"));
+        assert_eq!(
+            paths.git_exe(),
+            paths.bin.join("git").join("cmd").join("git.exe")
+        );
+        write_file(&paths.bin.join("git").join("git.exe"), b"git");
+        assert_eq!(paths.git_exe(), paths.bin.join("git").join("git.exe"));
+        write_file(&paths.bin.join("git").join("bin").join("git.exe"), b"git");
+        assert_eq!(
+            paths.git_exe(),
+            paths.bin.join("git").join("bin").join("git.exe")
+        );
+        write_file(&paths.bin.join("git").join("cmd").join("git.exe"), b"git");
+        assert_eq!(
+            paths.git_exe(),
+            paths.bin.join("git").join("cmd").join("git.exe")
+        );
     }
 
     fn write_file(path: &std::path::Path, bytes: &[u8]) {

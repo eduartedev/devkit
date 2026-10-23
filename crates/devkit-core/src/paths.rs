@@ -70,6 +70,7 @@ impl Paths {
             &self.bin.join("mailpit"),
             &self.bin.join("mkcert"),
             &self.bin.join("node"),
+            &self.bin.join("git"),
             &self.bin.join("composer"),
         ] {
             fs::create_dir_all(dir)?;
@@ -159,6 +160,18 @@ impl Paths {
 
     pub fn mkcert(&self) -> PathBuf {
         self.bin.join("mkcert").join("mkcert.exe")
+    }
+
+    /// `cmd\git.exe` es el de MinGit. También vale una copia plana en `bin\git`.
+    pub fn git_exe(&self) -> PathBuf {
+        let root = self.bin.join("git");
+        for rel in ["cmd/git.exe", "bin/git.exe", "git.exe"] {
+            let path = root.join(rel);
+            if path.is_file() {
+                return path;
+            }
+        }
+        root.join("cmd").join("git.exe")
     }
 
     pub fn node_exe(&self) -> PathBuf {
