@@ -245,14 +245,14 @@ impl Supervisor {
                 if let Some(cwd) = &spec.cwd {
                     cmd.current_dir(cwd);
                 }
-                let _ = cmd.status();
+                let _ = crate::win_spawn::status_silent(&mut cmd);
                 // stop es más agresivo si quit no cierra a tiempo.
                 let mut cmd = Command::new(&spec.binary);
                 cmd.args(&spec.args).args(["-s", "stop"]);
                 if let Some(cwd) = &spec.cwd {
                     cmd.current_dir(cwd);
                 }
-                let _ = cmd.status();
+                let _ = crate::win_spawn::status_silent(&mut cmd);
             }
             StopKind::MysqlAdmin => {
                 // Preferir stop_mysql_admin desde kit; aquí solo fuerza después.
@@ -317,17 +317,11 @@ impl Supervisor {
                     spec.port.to_string(),
                     "shutdown".into(),
                 ]);
-                let _guard = crate::win_spawn::StdioInheritGuard::clear();
-                let ok = Command::new(mysqladmin)
-                    .args(&args)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
+                let mut cmd = Command::new(mysqladmin);
+                cmd.args(&args);
+                crate::win_spawn::status_silent(&mut cmd)
                     .map(|s| s.success())
-                    .unwrap_or(false);
-                drop(_guard);
-                ok
+                    .unwrap_or(false)
             };
             if !try_shutdown(user, password) && !password.is_empty() {
                 let _ = try_shutdown(user, "");
@@ -371,11 +365,9 @@ fn kill_listeners_for_service(spec: &ServiceSpec) {
 fn kill_pid(pid: u32) {
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        let _ = crate::win_spawn::status_silent(&mut cmd);
     }
     #[cfg(not(windows))]
     {

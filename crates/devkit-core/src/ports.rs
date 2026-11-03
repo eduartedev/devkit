@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -182,11 +182,9 @@ impl ListeningTable {
 
     fn capture_naming(only_ports: Option<&[u16]>) -> Self {
         let mut table = Self::default();
-        let output = Command::new("netstat")
-            .args(["-ano", "-p", "tcp"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
+        let mut cmd = Command::new("netstat");
+        cmd.args(["-ano", "-p", "tcp"]);
+        let output = crate::win_spawn::output_hidden(&mut cmd);
         let Ok(out) = output else {
             return table;
         };

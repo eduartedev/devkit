@@ -18,6 +18,7 @@ pub mod paths;
 pub mod php;
 pub mod php_version;
 pub mod ports;
+pub mod process_stream;
 pub mod secrets;
 pub mod setup;
 pub mod site;

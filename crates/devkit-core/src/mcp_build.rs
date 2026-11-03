@@ -1,10 +1,9 @@
 //! Compila `devkit-mcp` una vez, desde el checkout, sin shell.
 
 use crate::error::{Error, Result};
-use crate::win_spawn::StdioInheritGuard;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct McpExeInfo {
@@ -69,20 +68,10 @@ pub fn build_mcp_release(root: &Path) -> Result<String> {
         ));
     }
 
-    let _guard = StdioInheritGuard::clear();
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "-p", "devkit-mcp", "--release"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-
-    let output = cmd.output().map_err(|e| {
+        .current_dir(root);
+    let output = crate::win_spawn::output_hidden(&mut cmd).map_err(|e| {
         Error::msg(format!(
             "no se pudo ejecutar cargo ({e}). Instala Rust y vuelve a intentar."
         ))

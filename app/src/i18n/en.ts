@@ -15,6 +15,10 @@ export const en: Record<MessageKey, string> = {
   regenVhosts: "Regenerate vhosts",
   regenVhostsTitle: "Rewrites etc/nginx/sites (Laravel → public/)",
   vhostTitle: "Edit vhost in Notepad",
+  deleteSite: "Delete",
+  deleteSiteTitle: "Removes the folder under www/, regenerates vhosts, and updates hosts",
+  deleteSiteConfirm:
+    "Delete site “{name}”? This removes the folder under www/ (junctions: unlink only).",
   sitesEmpty: "Create a folder in www/",
   kindBlank: "Blank PHP",
   kindLaravel: "Laravel",
@@ -130,6 +134,7 @@ export const en: Record<MessageKey, string> = {
   "busy.stop": "stopping",
   "busy.vhosts": "vhosts",
   "busy.create": "creating site",
+  "busy.delete": "deleting site",
   "busy.ports": "ports",
   "busy.hosts": "hosts",
   "busy.ssl": "ssl",

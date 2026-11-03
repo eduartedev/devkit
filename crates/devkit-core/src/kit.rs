@@ -125,14 +125,20 @@ impl DevKit {
     }
 
     fn spec_mariadb(&self) -> Result<ServiceSpec> {
+        // En Windows `--console` abre/consolida ventana de consola; el log va a log-error en my.ini.
+        let defaults = format!(
+            "--defaults-file={}",
+            self.paths.posix(&self.paths.mysql_cnf())
+        );
+        #[cfg(windows)]
+        let args = vec![defaults];
+        #[cfg(not(windows))]
+        let args = vec![defaults, "--console".into()];
         Ok(ServiceSpec {
             id: "mariadb".into(),
             display_name: "MariaDB".into(),
             binary: self.paths.mysqld(),
-            args: vec![
-                format!("--defaults-file={}", self.paths.posix(&self.paths.mysql_cnf())),
-                "--console".into(),
-            ],
+            args,
             env: vec![],
             cwd: Some(self.paths.bin.join("mariadb")),
             bind_host: self.config.bind.clone(),
@@ -190,17 +196,17 @@ impl DevKit {
         nginx::write_all(&self.paths, &self.config, &sites)?;
         if crate::health::is_port_open(&self.config.bind, self.config.http_port) {
             let spec = self.spec_nginx()?;
-            let _ = Command::new(&spec.binary)
-                .args([
-                    "-p",
-                    &self.paths.posix(&self.paths.root),
-                    "-c",
-                    &self.paths.posix(&self.paths.nginx_conf()),
-                    "-s",
-                    "reload",
-                ])
-                .current_dir(self.paths.bin.join("nginx"))
-                .status();
+            let mut cmd = Command::new(&spec.binary);
+            cmd.args([
+                "-p",
+                &self.paths.posix(&self.paths.root),
+                "-c",
+                &self.paths.posix(&self.paths.nginx_conf()),
+                "-s",
+                "reload",
+            ])
+            .current_dir(self.paths.bin.join("nginx"));
+            let _ = crate::win_spawn::status_silent(&mut cmd);
         }
         Ok(sites)
     }
@@ -273,11 +279,9 @@ impl DevKit {
                 };
                 #[cfg(windows)]
                 {
-                    let _ = Command::new("ipconfig")
-                        .args(["/flushdns"])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status();
+                    let mut cmd = Command::new("ipconfig");
+                    cmd.args(["/flushdns"]);
+                    let _ = crate::win_spawn::status_silent(&mut cmd);
                 }
             }
             Err(h) => {
@@ -303,11 +307,9 @@ impl DevKit {
         let pidfile = self.paths.logs.join("dns.pid");
         if let Ok(text) = fs::read_to_string(&pidfile) {
             if let Ok(pid) = text.trim().parse::<u32>() {
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/F", "/T"])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+                let mut cmd = Command::new("taskkill");
+                cmd.args(["/PID", &pid.to_string(), "/F", "/T"]);
+                let _ = crate::win_spawn::status_silent(&mut cmd);
             }
             let _ = fs::remove_file(pidfile);
         }
@@ -324,9 +326,9 @@ impl DevKit {
         }
         let installer = self.paths.mysql_install_db();
         if installer.exists() {
-            let status = Command::new(&installer)
-                .arg(format!("--datadir={}", self.paths.posix(&datadir)))
-                .status()?;
+            let mut cmd = Command::new(&installer);
+            cmd.arg(format!("--datadir={}", self.paths.posix(&datadir)));
+            let status = crate::win_spawn::status_silent(&mut cmd)?;
             if !status.success() {
                 return Err(Error::msg("mysql_install_db falló"));
             }
@@ -334,12 +336,12 @@ impl DevKit {
         }
         let mysqld = self.paths.mysqld();
         if mysqld.exists() {
-            let status = Command::new(&mysqld)
-                .args([
-                    format!("--datadir={}", self.paths.posix(&datadir)),
-                    "--initialize-insecure".into(),
-                ])
-                .status()?;
+            let mut cmd = Command::new(&mysqld);
+            cmd.args([
+                format!("--datadir={}", self.paths.posix(&datadir)),
+                "--initialize-insecure".into(),
+            ]);
+            let status = crate::win_spawn::status_silent(&mut cmd)?;
             if !status.success() {
                 return Err(Error::msg("mysqld --initialize-insecure falló"));
             }
@@ -380,17 +382,11 @@ impl DevKit {
             port,
             "ping".into(),
         ]);
-        let _guard = crate::win_spawn::StdioInheritGuard::clear();
-        let ok = Command::new(&admin)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+        let mut cmd = Command::new(&admin);
+        cmd.args(&args);
+        crate::win_spawn::status_silent(&mut cmd)
             .map(|s| s.success())
-            .unwrap_or(false);
-        drop(_guard);
-        ok
+            .unwrap_or(false)
     }
 
     /// Fuerza secreto y servidor a `root` sin contraseña (default local).
@@ -433,16 +429,14 @@ impl DevKit {
             ),
             "--skip-grant-tables".into(),
             format!("--bind-address={}", self.config.bind),
-            "--console".into(),
-        ])
-        .current_dir(self.paths.bin.join("mariadb"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(0x0800_0000);
-        }
+        ]);
+        #[cfg(not(windows))]
+        cmd.arg("--console");
+        cmd.current_dir(self.paths.bin.join("mariadb"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        crate::win_spawn::hide_console(&mut cmd);
         let _guard = crate::win_spawn::StdioInheritGuard::clear();
         let mut child = cmd.spawn().map_err(|e| {
             Error::msg(format!("no se pudo arrancar MariaDB en recuperación: {e}"))
@@ -482,26 +476,21 @@ impl DevKit {
         } else {
             self.paths.bin.join("mariadb").join("bin").join("mysql")
         };
-        let _guard = crate::win_spawn::StdioInheritGuard::clear();
-        let status = Command::new(&mysql)
-            .args([
-                "-h",
-                "127.0.0.1",
-                "-P",
-                &self.config.mysql_port.to_string(),
-                "-u",
-                "root",
-                "--protocol=TCP",
-                "--skip-password",
-                "-e",
-                sql,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+        let mut cmd = Command::new(&mysql);
+        cmd.args([
+            "-h",
+            "127.0.0.1",
+            "-P",
+            &self.config.mysql_port.to_string(),
+            "-u",
+            "root",
+            "--protocol=TCP",
+            "--skip-password",
+            "-e",
+            sql,
+        ]);
+        let status = crate::win_spawn::status_silent(&mut cmd)
             .map_err(|e| Error::msg(format!("mysql de recuperación falló: {e}")))?;
-        drop(_guard);
         if !status.success() {
             return Err(Error::msg(
                 "no se pudo fijar la contraseña de MariaDB en modo recuperación",
@@ -569,14 +558,9 @@ impl DevKit {
         ]);
         // mysqladmin password aplica al usuario de -u; si desired != admin_user ya lo manejamos arriba.
         if desired.user == admin_user {
-            let _guard = crate::win_spawn::StdioInheritGuard::clear();
-            let status = Command::new(&admin)
-                .args(&args)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()?;
-            drop(_guard);
+            let mut cmd = Command::new(&admin);
+            cmd.args(&args);
+            let status = crate::win_spawn::status_silent(&mut cmd)?;
             if !status.success() {
                 return Err(Error::msg(
                     "mysqladmin no pudo cambiar la contraseña de MariaDB",
@@ -627,11 +611,9 @@ impl DevKit {
             "-e".into(),
             sql,
         ]);
-        let status = Command::new(&mysql)
-            .args(&args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
+        let mut cmd = Command::new(&mysql);
+        cmd.args(&args);
+        let status = crate::win_spawn::status_silent(&mut cmd)?;
         if !status.success() {
             return Err(Error::msg(format!(
                 "no se pudo crear/actualizar el usuario MariaDB '{user}'"
@@ -941,10 +923,19 @@ impl DevKit {
     }
 
     pub fn create_site(&mut self, kind: &str, name: &str) -> Result<std::path::PathBuf> {
+        self.create_site_with_log(kind, name, &mut |_| {})
+    }
+
+    pub fn create_site_with_log(
+        &mut self,
+        kind: &str,
+        name: &str,
+        on_line: &mut impl FnMut(&str),
+    ) -> Result<std::path::PathBuf> {
         let path = match kind {
             "blank" | "php" => create::create_blank(&self.paths, name)?,
             "laravel" => {
-                create::create_laravel(&self.paths, &self.config.php_version, name)?
+                create::create_laravel(&self.paths, &self.config.php_version, name, on_line)?
             }
             "wordpress" | "wp" => create::create_wordpress(&self.paths, name)?,
             other => {
@@ -956,7 +947,18 @@ impl DevKit {
         // Regenera vhosts (Laravel → public/) y hosts.
         self.reload_sites()?;
         let _ = self.ensure_hosts();
+        crate::process_stream::write_log_line(
+            on_line,
+            &format!("✓ Sitio listo: {}", path.display()),
+        );
         Ok(path)
+    }
+
+    pub fn delete_site(&mut self, name: &str) -> Result<String> {
+        create::delete_site(&self.paths, name)?;
+        self.reload_sites()?;
+        let _ = self.ensure_hosts();
+        Ok(format!("sitio '{name}' eliminado"))
     }
 
     /// Reescribe todos los vhosts nginx según www/ (Laravel usa public/).

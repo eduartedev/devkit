@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { hasMessage, LANG_OPTIONS, type MessageKey } from "./i18n/index.ts";
 import { useI18n } from "./i18n/I18n.tsx";
@@ -207,6 +208,9 @@ export default function App() {
     }
     setBusy(label);
     setLog("");
+    const unlisten = await listen<string>("job-log", (ev) => {
+      setLog((prev) => prev + ev.payload);
+    });
     try {
       const out = await fn();
       if (Array.isArray(out)) setLog(out.join("\n"));
@@ -216,8 +220,10 @@ export default function App() {
       }
       await refresh();
     } catch (e) {
-      setLog(String(e));
+      const msg = String(e);
+      setLog((prev) => (prev ? `${prev}\n${msg}` : msg));
     } finally {
+      unlisten();
       setBusy(null);
     }
   }
@@ -465,16 +471,34 @@ export default function App() {
                   >
                     {s.hostname}
                   </button>
-                  <button
-                    type="button"
-                    className="mini"
-                    title={t("vhostTitle")}
-                    onClick={() =>
-                      runLight(() => invoke("open_site_vhost", { name: s.name }))
-                    }
-                  >
-                    vhost
-                  </button>
+                  <div className="site-actions">
+                    <button
+                      type="button"
+                      className="mini"
+                      title={t("vhostTitle")}
+                      onClick={() =>
+                        runLight(() => invoke("open_site_vhost", { name: s.name }))
+                      }
+                    >
+                      vhost
+                    </button>
+                    {s.name !== "default" && (
+                      <button
+                        type="button"
+                        className="mini danger"
+                        disabled={!!busy}
+                        title={t("deleteSiteTitle")}
+                        onClick={() => {
+                          if (!confirm(t("deleteSiteConfirm", { name: s.name }))) return;
+                          runHeavy("delete", () =>
+                            invoke("delete_site", { name: s.name }),
+                          );
+                        }}
+                      >
+                        {t("deleteSite")}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <code>{s.url}</code>
               </li>

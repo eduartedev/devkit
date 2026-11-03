@@ -1,5 +1,43 @@
 //! Helpers de spawn en Windows para no heredar pipes del shell padre.
 
+use std::io;
+use std::process::{Command, ExitStatus, Output, Stdio};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Evita que procesos hijos abran una consola nueva (solo Windows).
+#[cfg(windows)]
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+pub fn hide_console(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub fn hide_console(_cmd: &mut Command) {}
+
+/// Ejecuta sin ventana de consola ni stdio (Windows: `CREATE_NO_WINDOW` + guard de herencia).
+pub fn status_silent(cmd: &mut Command) -> io::Result<ExitStatus> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    hide_console(cmd);
+    let _guard = StdioInheritGuard::clear();
+    cmd.status()
+}
+
+/// Como `output()` pero sin abrir consola en Windows.
+pub fn output_hidden(cmd: &mut Command) -> io::Result<Output> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console(cmd);
+    let _guard = StdioInheritGuard::clear();
+    cmd.output()
+}
+
 /// Mientras vive, quita `HANDLE_FLAG_INHERIT` de stdin/stdout/stderr del proceso actual.
 ///
 /// Rust `Command` usa `bInheritHandles=TRUE` al redirigir a `Stdio::null()`. Eso copia

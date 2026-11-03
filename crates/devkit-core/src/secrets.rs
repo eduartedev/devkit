@@ -50,10 +50,10 @@ fn restrict_acl(path: &Path) {
     #[cfg(windows)]
     {
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "Users".into());
-        let _ = Command::new("icacls")
-            .arg(path)
-            .args(["/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
-            .output();
+        let mut cmd = Command::new("icacls");
+        cmd.arg(path)
+            .args(["/inheritance:r", "/grant:r", &format!("{user}:(R,W)")]);
+        let _ = crate::win_spawn::output_hidden(&mut cmd);
     }
     #[cfg(not(windows))]
     {

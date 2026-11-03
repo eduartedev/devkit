@@ -46,9 +46,9 @@ pub fn meets_php2shell_minimum(full_version: &str, major: &str) -> bool {
 
 /// Lee `PHP x.y.z` desde `php.exe -v` o `php-cgi.exe -v`.
 pub fn read_installed_version(php_bin: &Path) -> Result<String> {
-    let out = Command::new(php_bin)
-        .arg("-v")
-        .output()
+    let mut cmd = Command::new(php_bin);
+    cmd.arg("-v");
+    let out = crate::win_spawn::output_hidden(&mut cmd)
         .map_err(|e| Error::msg(format!("no se pudo ejecutar {}: {e}", php_bin.display())))?;
     if !out.status.success() {
         return Err(Error::msg(format!(

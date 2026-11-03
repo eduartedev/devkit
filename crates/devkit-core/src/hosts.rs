@@ -3,7 +3,7 @@ use crate::model::Site;
 use crate::model::LOCALHOST;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 const BEGIN: &str = "# BEGIN DEVKIT";
 const END: &str = "# END DEVKIT";
@@ -128,11 +128,9 @@ fn normalize_hosts(s: &str) -> String {
 fn flush_dns_cache() {
     #[cfg(windows)]
     {
-        let _ = Command::new("ipconfig")
-            .args(["/flushdns"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let mut cmd = Command::new("ipconfig");
+        cmd.args(["/flushdns"]);
+        let _ = crate::win_spawn::status_silent(&mut cmd);
     }
 }
 
@@ -156,21 +154,21 @@ fn write_hosts_elevated(content: &str) -> Result<()> {
 
     let script_s = script.display().to_string().replace('\'', "''");
     // -Wait puede colgarse si el UAC queda detrás de otras ventanas; usamos timeout.
-    let status = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "$p = Start-Process -FilePath powershell -Verb RunAs -PassThru -WindowStyle Hidden \
-                 -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{script_s}'; \
-                 if (-not $p) {{ exit 1 }}; \
-                 if (-not $p.WaitForExit(45000)) {{ try {{ $p.Kill() }} catch {{}}; exit 2 }}; \
-                 exit $p.ExitCode"
-            ),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    let mut ps = Command::new("powershell");
+    ps.args([
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        &format!(
+            "$p = Start-Process -FilePath powershell -Verb RunAs -PassThru -WindowStyle Hidden \
+             -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','{script_s}'; \
+             if (-not $p) {{ exit 1 }}; \
+             if (-not $p.WaitForExit(45000)) {{ try {{ $p.Kill() }} catch {{}}; exit 2 }}; \
+             exit $p.ExitCode"
+        ),
+    ]);
+    let status = crate::win_spawn::status_silent(&mut ps)
         .map_err(|e| Error::msg(format!("no se pudo pedir UAC para hosts: {e}")))?;
 
     if status.code() == Some(2) {

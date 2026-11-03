@@ -13,6 +13,10 @@ export const es = {
   regenVhosts: "Regenerar vhosts",
   regenVhostsTitle: "Reescribe etc/nginx/sites",
   vhostTitle: "Editar vhost en bloc de notas",
+  deleteSite: "Eliminar",
+  deleteSiteTitle: "Borra la carpeta en www/, regenera vhosts y actualiza hosts",
+  deleteSiteConfirm:
+    "¿Eliminar el sitio «{name}»? Se borra la carpeta en www/ (si es junction, solo el enlace).",
   sitesEmpty: "Crea una carpeta en www/",
   kindBlank: "PHP en blanco",
   kindLaravel: "Laravel",
@@ -132,6 +136,7 @@ export const es = {
   "busy.stop": "deteniendo",
   "busy.vhosts": "vhosts",
   "busy.create": "creando sitio",
+  "busy.delete": "eliminando sitio",
   "busy.ports": "puertos",
   "busy.hosts": "hosts",
   "busy.ssl": "ssl",

@@ -203,8 +203,10 @@ fn run() -> devkit_core::Result<()> {
             }
         },
         Commands::Create { kind, name } => {
-            let p = kit.create_site(&kind, &name)?;
-            println!("{}", p.display());
+            let p = kit.create_site_with_log(&kind, &name, &mut |line| print!("{line}"))?;
+            if kind != "laravel" {
+                println!("{}", p.display());
+            }
         }
         Commands::Ssl => println!("{}", kit.enable_ssl()?),
         Commands::Pack { out } => println!("{}", kit.pack(out)?.display()),

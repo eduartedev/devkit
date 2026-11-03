@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 /// Snapshot para lecturas / acciones ligeras sin esperar el mutex del kit
@@ -210,12 +210,28 @@ async fn isolated_path(state: State<'_, KitState>) -> Result<String, String> {
 
 #[tauri::command]
 async fn create_site(
+    app: AppHandle,
     state: State<'_, KitState>,
     kind: String,
     name: String,
 ) -> Result<StackStatus, String> {
     with_heavy(&state, "create", move |kit| {
-        kit.create_site(&kind, &name).map_err(map_err)?;
+        kit.create_site_with_log(&kind, &name, &mut |line| {
+            let _ = app.emit("job-log", line);
+        })
+        .map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_site(
+    state: State<'_, KitState>,
+    name: String,
+) -> Result<StackStatus, String> {
+    with_heavy(&state, "delete", move |kit| {
+        kit.delete_site(&name).map_err(map_err)?;
         kit.status_light().map_err(map_err)
     })
     .await
@@ -509,6 +525,7 @@ pub fn run() {
             build_mcp,
             isolated_path,
             create_site,
+            delete_site,
             setup_stack,
             php_versions,
             use_php,
