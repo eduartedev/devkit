@@ -273,9 +273,9 @@ pub enum PathEnvScope {
 }
 
 /// IDs de servicios que se pueden auto-arrancar al abrir el panel.
-/// `python` es un grupo virtual: expande a todos los `python-<sitio>`.
-pub const AUTO_START_SERVICE_IDS: [&str; 6] =
-    ["mariadb", "php", "nginx", "python", "redis", "mailpit"];
+/// `python` / `node` son grupos virtuales: expanden a `python-*` / `node-*`.
+pub const AUTO_START_SERVICE_IDS: [&str; 7] =
+    ["mariadb", "php", "nginx", "python", "node", "redis", "mailpit"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -394,10 +394,11 @@ pub fn ordered_auto_start_ids(requested: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Expande el id virtual `python` a los `python-<sitio>` (no a Nginx).
+/// Expande los ids virtuales `python` / `node` a los sitios (no a Nginx).
 pub fn expand_auto_start_service_ids(
     requested: &[String],
     python_site_service_ids: &[String],
+    node_site_service_ids: &[String],
 ) -> Vec<String> {
     let ordered = ordered_auto_start_ids(requested);
     let mut out = Vec::new();
@@ -408,12 +409,20 @@ pub fn expand_auto_start_service_ids(
                     out.push(py.clone());
                 }
             }
+        } else if id == "node" {
+            for n in node_site_service_ids {
+                if n.starts_with("node-") {
+                    out.push(n.clone());
+                }
+            }
         } else {
             out.push(id);
         }
     }
     for id in requested {
-        if id.starts_with("python-") && !out.iter().any(|x| x == id) {
+        if (id.starts_with("python-") || id.starts_with("node-"))
+            && !out.iter().any(|x| x == id)
+        {
             out.push(id.clone());
         }
     }
@@ -530,12 +539,13 @@ mod tests {
             "mailpit".into(),
             "bogus".into(),
             "python".into(),
+            "node".into(),
             "nginx".into(),
             "mariadb".into(),
         ]);
         assert_eq!(
             ids,
-            ["mariadb", "nginx", "python", "mailpit"]
+            ["mariadb", "nginx", "python", "node", "mailpit"]
                 .map(String::from)
                 .to_vec()
         );
@@ -560,6 +570,7 @@ mod tests {
         let expanded = expand_auto_start_service_ids(
             &["python".into(), "nginx".into()],
             &["python-blog".into(), "python-api".into()],
+            &[],
         );
         assert_eq!(
             expanded,
@@ -572,9 +583,38 @@ mod tests {
         let only_py = expand_auto_start_service_ids(
             &["python".into()],
             &["python-blog".into()],
+            &[],
         );
         assert_eq!(only_py, vec!["python-blog".to_string()]);
         assert!(!only_py.iter().any(|id| id == "nginx"));
+    }
+
+    #[test]
+    fn expand_node_group_does_not_start_nginx() {
+        let expanded = expand_auto_start_service_ids(
+            &["node".into(), "nginx".into()],
+            &[],
+            &["node-api".into(), "node-web".into()],
+        );
+        assert_eq!(
+            expanded,
+            vec![
+                "nginx".to_string(),
+                "node-api".to_string(),
+                "node-web".to_string(),
+            ]
+        );
+        let only_node =
+            expand_auto_start_service_ids(&["node".into()], &[], &["node-api".into()]);
+        assert_eq!(only_node, vec!["node-api".to_string()]);
+        assert!(!only_node.iter().any(|id| id == "nginx"));
+    }
+
+    #[test]
+    fn validate_accepts_node_auto_start_group() {
+        let mut settings = AppSettings::from_config(&AppConfig::default());
+        settings.auto_start_services = vec!["node".into(), "nginx".into()];
+        assert!(settings.validate().is_ok());
     }
 
     #[test]

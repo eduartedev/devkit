@@ -292,6 +292,8 @@ fn run() -> devkit_core::Result<()> {
                 && kind != "flask"
                 && kind != "fastapi"
                 && kind != "django"
+                && kind != "node"
+                && kind != "express"
             {
                 println!("{}", p.display());
             }
@@ -463,6 +465,9 @@ fn print_status(st: &devkit_core::StackStatus) {
     println!("php  {}", st.php_version);
     if !st.python_version.is_empty() {
         println!("python {}", st.python_version);
+    }
+    if st.node_ready {
+        println!("node  ready");
     }
     println!("dns  {}", st.dns);
     for s in &st.services {

@@ -220,6 +220,8 @@ mod tests {
             python_version: None,
             python_runtime: None,
             python_port: None,
+            node_runtime: None,
+            node_port: None,
         }
     }
 

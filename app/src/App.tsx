@@ -25,10 +25,12 @@ type Site = {
   php_version: string;
   ssl: boolean;
   url: string;
-  kind?: "php" | "python";
+  kind?: "php" | "python" | "node";
   python_version?: string | null;
   python_runtime?: string | null;
   python_port?: number | null;
+  node_runtime?: string | null;
+  node_port?: number | null;
 };
 
 type PortOwner =
@@ -87,6 +89,7 @@ const AUTO_START_SERVICE_IDS = [
   "php",
   "nginx",
   "python",
+  "node",
   "redis",
   "mailpit",
 ] as const;
@@ -95,6 +98,7 @@ type Stack = {
   root: string;
   php_version: string;
   python_version?: string;
+  node_ready?: boolean;
   services: Service[];
   sites: Site[];
   dns: string;
@@ -440,6 +444,12 @@ export default function App() {
           <strong>{stack?.python_version ?? "—"}</strong>
         </div>
         <div>
+          <span>Node</span>
+          <strong>
+            {stack?.node_ready ? t("nodeReady") : t("nodeMissing")}
+          </strong>
+        </div>
+        <div>
           <span>DNS</span>
           <strong>{stack?.dns ?? "—"}</strong>
         </div>
@@ -558,6 +568,8 @@ export default function App() {
               <option value="flask">{t("kindFlask")}</option>
               <option value="fastapi">{t("kindFastapi")}</option>
               <option value="django">{t("kindDjango")}</option>
+              <option value="node">{t("kindNode")}</option>
+              <option value="express">{t("kindExpress")}</option>
             </select>
             <input
               placeholder={t("sitePlaceholder")}
@@ -1357,7 +1369,9 @@ export default function App() {
                       const label =
                         id === "python"
                           ? t("svcPython")
-                          : (svc?.display_name ?? id);
+                          : id === "node"
+                            ? t("svcNode")
+                            : (svc?.display_name ?? id);
                       const on = appDraft.auto_start_services.includes(id);
                       return (
                         <li key={id}>

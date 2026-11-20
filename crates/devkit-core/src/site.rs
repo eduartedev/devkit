@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use crate::model::{Site, SiteKind};
 use crate::paths::{AppConfig, Paths};
+use crate::node_site::{self, is_node_site};
 use crate::python_site::{self, is_python_site};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -148,6 +149,31 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
                 python_version: Some(marker.version),
                 python_runtime: Some(marker.runtime.as_str().to_string()),
                 python_port: Some(port),
+                node_runtime: None,
+                node_port: None,
+            });
+        } else if is_node_site(&project) {
+            let marker = match node_site::read_marker(&project) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let port = match node_site::ensure_port(paths, &name) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            sites.push(Site {
+                name,
+                hostname,
+                root: project,
+                php_version: cfg.php_version.clone(),
+                ssl: cfg.ssl,
+                url,
+                kind: SiteKind::Node,
+                python_version: None,
+                python_runtime: None,
+                python_port: None,
+                node_runtime: Some(marker.runtime.as_str().to_string()),
+                node_port: Some(port),
             });
         } else {
             let root = detect_web_root(&project);
@@ -162,6 +188,8 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
                 python_version: None,
                 python_runtime: None,
                 python_port: None,
+                node_runtime: None,
+                node_port: None,
             });
         }
     }

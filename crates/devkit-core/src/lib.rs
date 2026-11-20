@@ -12,6 +12,7 @@ pub mod kit;
 pub mod logs;
 pub mod mcp_build;
 pub mod nginx;
+pub mod node_site;
 pub mod pack;
 pub mod path_env;
 pub mod paths;

@@ -11,6 +11,7 @@ Use it to run PHP apps and frameworks on your machine without wiring Nginx, PHP,
 - **HTTP/HTTPS** via Nginx (default HTTP port `8080`, HTTPS `8443` after SSL setup)
 - **Multiple PHP versions** (8.3, 8.4, 8.5) under `bin/php/`; switch with `devkit php use`
 - **Python** (3.12, 3.13, 3.14) under `bin/python/`; Flask/FastAPI/Django sites with venv; `devkit python use`
+- **Node** (LTS) under `bin/node/`; Node/Express sites proxied by Nginx
 - **Cron** per site via `www/<site>/.devkit-cron.toml` → Windows Task Scheduler (`devkit cron sync`)
 - **Updates** for PHP/Python/Node patches and majors (`devkit update check` → install → activate)
 - **MariaDB** for local databases; credentials stored under `etc/devkit/secrets/`
@@ -85,6 +86,8 @@ devkit create python my-script
 devkit create flask my-api
 devkit create fastapi my-svc
 devkit create django my-web
+devkit create node my-api
+devkit create express my-svc
 devkit cron list | sync | disable [site]
 devkit cron run <site> <job>
 devkit update check | install <id> | activate <id>

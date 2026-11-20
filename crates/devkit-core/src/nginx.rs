@@ -2,6 +2,9 @@ use crate::bind::assert_config_localhost_only;
 use crate::error::{Error, Result};
 use crate::model::{Site, SiteKind, LOCALHOST};
 use crate::paths::{AppConfig, Paths};
+use crate::node_site::{
+    port_in_range as node_port_in_range, NODE_PORT_BASE, NODE_PORT_MAX,
+};
 use crate::python_site::{port_in_range, PYTHON_PORT_BASE, PYTHON_PORT_MAX};
 use crate::site::{nginx_escape_root, nginx_escape_server_name};
 use std::fs;
@@ -182,6 +185,9 @@ pub fn render_site_http(paths: &Paths, cfg: &AppConfig, site: &Site) -> Result<S
     if site.kind == SiteKind::Python {
         return render_python_site_http(paths, cfg, site);
     }
+    if site.kind == SiteKind::Node {
+        return render_node_site_http(paths, cfg, site);
+    }
     let name = nginx_escape_server_name(&site.name)?;
     let hostname = format!("{name}.{}", cfg.tld);
     let root = nginx_escape_root(&site.root)?;
@@ -253,6 +259,15 @@ fn python_proxy_location(port: u16) -> Result<String> {
     Ok(proxy_pass_location(port))
 }
 
+fn node_proxy_location(port: u16) -> Result<String> {
+    if !node_port_in_range(port) {
+        return Err(Error::msg(format!(
+            "puerto Node {port} fuera de {NODE_PORT_BASE}..{NODE_PORT_MAX}"
+        )));
+    }
+    Ok(proxy_pass_location(port))
+}
+
 fn render_proxied_site_http(
     paths: &Paths,
     cfg: &AppConfig,
@@ -297,6 +312,14 @@ fn render_python_site_http(paths: &Paths, cfg: &AppConfig, site: &Site) -> Resul
         Error::msg(format!("sitio Python '{}' sin puerto asignado", site.name))
     })?;
     let proxy = python_proxy_location(port)?;
+    render_proxied_site_http(paths, cfg, site, &proxy)
+}
+
+fn render_node_site_http(paths: &Paths, cfg: &AppConfig, site: &Site) -> Result<String> {
+    let port = site.node_port.ok_or_else(|| {
+        Error::msg(format!("sitio Node '{}' sin puerto asignado", site.name))
+    })?;
+    let proxy = node_proxy_location(port)?;
     render_proxied_site_http(paths, cfg, site, &proxy)
 }
 
@@ -419,6 +442,8 @@ mod tests {
             python_version: None,
             python_runtime: None,
             python_port: None,
+            node_runtime: None,
+            node_port: None,
         }
     }
 
@@ -476,9 +501,34 @@ mod tests {
             python_version: Some("3.13".into()),
             python_runtime: Some("flask".into()),
             python_port: Some(9100),
+            node_runtime: None,
+            node_port: None,
         };
         let conf = render_site_http(&paths, &cfg(), &site).unwrap();
         assert!(conf.contains("proxy_pass http://127.0.0.1:9100;"));
+        assert!(!conf.contains("fastcgi"));
+        assert!(assert_config_localhost_only(&conf).is_ok());
+    }
+
+    #[test]
+    fn node_vhost_proxies_localhost_without_fastcgi() {
+        let paths = Paths::from_root(PathBuf::from(r"C:\DevKit"));
+        let site = Site {
+            name: "api".into(),
+            hostname: "api.test".into(),
+            root: PathBuf::from(r"C:\DevKit\www\api"),
+            php_version: "8.3".into(),
+            ssl: false,
+            url: "http://api.test:8080".into(),
+            kind: SiteKind::Node,
+            python_version: None,
+            python_runtime: None,
+            python_port: None,
+            node_runtime: Some("express".into()),
+            node_port: Some(9200),
+        };
+        let conf = render_site_http(&paths, &cfg(), &site).unwrap();
+        assert!(conf.contains("proxy_pass http://127.0.0.1:9200;"));
         assert!(!conf.contains("fastcgi"));
         assert!(assert_config_localhost_only(&conf).is_ok());
     }
@@ -497,6 +547,28 @@ mod tests {
             python_version: Some("3.13".into()),
             python_runtime: Some("python".into()),
             python_port: Some(80),
+            node_runtime: None,
+            node_port: None,
+        };
+        assert!(render_site_http(&paths, &cfg(), &site).is_err());
+    }
+
+    #[test]
+    fn node_vhost_rejects_port_out_of_range() {
+        let paths = Paths::from_root(PathBuf::from(r"C:\DevKit"));
+        let site = Site {
+            name: "api".into(),
+            hostname: "api.test".into(),
+            root: PathBuf::from(r"C:\DevKit\www\api"),
+            php_version: "8.3".into(),
+            ssl: false,
+            url: String::new(),
+            kind: SiteKind::Node,
+            python_version: None,
+            python_runtime: None,
+            python_port: None,
+            node_runtime: Some("node".into()),
+            node_port: Some(80),
         };
         assert!(render_site_http(&paths, &cfg(), &site).is_err());
     }
@@ -515,6 +587,8 @@ mod tests {
             python_version: None,
             python_runtime: None,
             python_port: None,
+            node_runtime: None,
+            node_port: None,
         };
         assert!(render_site_http(&paths, &cfg(), &site).is_err());
     }

@@ -14,6 +14,7 @@ use crate::secrets::{
     heal_mysql_secret_toward_empty, local_default_mysql_credentials, mysql_credentials,
     redis_password, write_mysql_credentials, DbCredentials,
 };
+use crate::node_site::{self, NodeRuntime};
 use crate::python_site::{self, PythonRuntime};
 use crate::setup::{list_php_versions, list_python_versions, log_setup, run_setup};
 use crate::site::scan_sites;
@@ -95,11 +96,14 @@ impl DevKit {
             if let Some(spec) = self.spec_python_site(&site)? {
                 specs.push(spec);
             }
+            if let Some(spec) = self.spec_node_site(&site)? {
+                specs.push(spec);
+            }
         }
         Ok(specs)
     }
 
-    /// Expande el id virtual `python` a todos los `python-<sitio>`.
+    /// Expande los ids virtuales `python` / `node` a todos los sitios.
     pub fn expand_service_ids(&self, ids: &[String]) -> Result<Vec<String>> {
         let specs = self.specs()?;
         let python_ids: Vec<String> = specs
@@ -107,7 +111,16 @@ impl DevKit {
             .filter(|s| s.id.starts_with("python-"))
             .map(|s| s.id.clone())
             .collect();
-        Ok(crate::paths::expand_auto_start_service_ids(ids, &python_ids))
+        let node_ids: Vec<String> = specs
+            .iter()
+            .filter(|s| s.id.starts_with("node-"))
+            .map(|s| s.id.clone())
+            .collect();
+        Ok(crate::paths::expand_auto_start_service_ids(
+            ids,
+            &python_ids,
+            &node_ids,
+        ))
     }
 
     fn spec_python_site(&self, site: &crate::model::Site) -> Result<Option<ServiceSpec>> {
@@ -137,6 +150,37 @@ impl DevKit {
             bind_host: self.config.bind.clone(),
             port,
             pidfile: self.paths.logs.join(format!("python-{}.pid", site.name)),
+            stop: StopKind::Terminate,
+        }))
+    }
+
+    fn spec_node_site(&self, site: &crate::model::Site) -> Result<Option<ServiceSpec>> {
+        if site.kind != crate::model::SiteKind::Node {
+            return Ok(None);
+        }
+        let runtime_str = site
+            .node_runtime
+            .as_deref()
+            .ok_or_else(|| Error::msg(format!("sitio Node '{}' sin runtime", site.name)))?;
+        let _runtime = NodeRuntime::parse(runtime_str)?;
+        let port = site
+            .node_port
+            .ok_or_else(|| Error::msg(format!("sitio Node '{}' sin puerto", site.name)))?;
+        let node = self.paths.node_exe();
+        let args = node_site::build_argv(&site.root, &self.config.bind, port)?;
+        Ok(Some(ServiceSpec {
+            id: format!("node-{}", site.name),
+            display_name: format!("Node ({})", site.name),
+            binary: node,
+            args,
+            env: vec![
+                ("DEVKIT_BIND".into(), self.config.bind.clone()),
+                ("DEVKIT_PORT".into(), port.to_string()),
+            ],
+            cwd: Some(site.root.clone()),
+            bind_host: self.config.bind.clone(),
+            port,
+            pidfile: self.paths.logs.join(format!("node-{}.pid", site.name)),
             stop: StopKind::Terminate,
         }))
     }
@@ -775,20 +819,71 @@ impl DevKit {
         }
     }
 
-    /// Lista para panel/CLI: stack fijo + grupo Python; oculta `python-<sitio>`.
+    /// Fila de grupo Node para el panel (start/stop expanden a `node-*`).
+    fn node_group_snapshot(&self, specs: &[ServiceSpec]) -> ServiceSnapshot {
+        let installed = self.paths.node_exe().is_file();
+        let node_specs: Vec<_> = specs.iter().filter(|s| s.id.starts_with("node-")).collect();
+        let running = node_specs
+            .iter()
+            .filter(|s| {
+                matches!(
+                    self.supervisor.snapshot(s).status,
+                    ServiceStatus::Running
+                )
+            })
+            .count();
+        let (status, detail) = if !installed {
+            (ServiceStatus::Stopped, "no instalado — setup".into())
+        } else if node_specs.is_empty() {
+            (ServiceStatus::Stopped, "sin sitios Node".into())
+        } else if running == node_specs.len() {
+            (
+                ServiceStatus::Running,
+                format!("{running}/{} sitios", node_specs.len()),
+            )
+        } else if running > 0 {
+            (
+                ServiceStatus::Starting,
+                format!("{running}/{} sitios", node_specs.len()),
+            )
+        } else {
+            (
+                ServiceStatus::Stopped,
+                format!("0/{} sitios", node_specs.len()),
+            )
+        };
+        ServiceSnapshot {
+            id: "node".into(),
+            display_name: "Node".into(),
+            status,
+            bind: self.config.bind.clone(),
+            port: node_site::NODE_PORT_BASE,
+            pid: None,
+            detail,
+        }
+    }
+
+    /// Lista para panel/CLI: stack fijo + grupos Python/Node; oculta `python-*` / `node-*`.
     fn services_for_ui(&self, specs: &[ServiceSpec]) -> Vec<ServiceSnapshot> {
         let mut services: Vec<_> = specs
             .iter()
-            .filter(|s| !s.id.starts_with("python-"))
+            .filter(|s| !s.id.starts_with("python-") && !s.id.starts_with("node-"))
             .map(|s| self.supervisor.snapshot(s))
             .collect();
         let py = self.python_group_snapshot(specs);
+        let node = self.node_group_snapshot(specs);
         let idx = services
             .iter()
             .position(|s| s.id == "nginx")
             .map(|i| i + 1)
             .unwrap_or(services.len().min(1));
         services.insert(idx, py);
+        let idx_node = services
+            .iter()
+            .position(|s| s.id == "python")
+            .map(|i| i + 1)
+            .unwrap_or(idx + 1);
+        services.insert(idx_node, node);
         services
     }
 
@@ -819,6 +914,7 @@ impl DevKit {
             root: self.paths.root.clone(),
             php_version: self.config.php_version.clone(),
             python_version: self.config.python_version.clone(),
+            node_ready: self.paths.node_exe().is_file(),
             services,
             sites,
             dns: self.last_dns.clone(),
@@ -841,7 +937,7 @@ impl DevKit {
         let specs = self.specs().unwrap_or_default();
         st.services = self.services_for_ui(&specs);
         for svc in &mut st.services {
-            if svc.id == "python" {
+            if svc.id == "python" || svc.id == "node" {
                 continue;
             }
             if let Some(check) = st.port_checks.iter().find(|c| c.service == svc.id) {
@@ -962,6 +1058,16 @@ impl DevKit {
             let specs = self.specs().unwrap_or_default();
             return Ok(self.python_group_snapshot(&specs));
         }
+        if id == "node" {
+            if !self.paths.node_exe().is_file() {
+                return Err(Error::msg(
+                    "Node no está instalado. Ejecuta `devkit setup`",
+                ));
+            }
+            let _ = self.start_services(&["node".into()], detach)?;
+            let specs = self.specs().unwrap_or_default();
+            return Ok(self.node_group_snapshot(&specs));
+        }
         if id == "mariadb" {
             self.init_mariadb_if_needed()?;
         }
@@ -989,6 +1095,13 @@ impl DevKit {
                 let _ = self.supervisor.stop(spec);
             }
             return Ok(self.python_group_snapshot(&specs));
+        }
+        if id == "node" {
+            let specs = self.specs()?;
+            for spec in specs.iter().filter(|s| s.id.starts_with("node-")).rev() {
+                let _ = self.supervisor.stop(spec);
+            }
+            return Ok(self.node_group_snapshot(&specs));
         }
         let spec = self
             .specs()?
@@ -1109,9 +1222,12 @@ impl DevKit {
                 &self.config.tld,
                 on_line,
             )?,
+            "node" | "express" => {
+                node_site::create_node_site(&self.paths, kind, name, on_line)?
+            }
             other => {
                 return Err(Error::msg(format!(
-                    "tipo desconocido '{other}' (blank|laravel|wordpress|python|flask|fastapi|django)"
+                    "tipo desconocido '{other}' (blank|laravel|wordpress|python|flask|fastapi|django|node|express)"
                 )))
             }
         };
@@ -1122,6 +1238,20 @@ impl DevKit {
             let safe = crate::site::parse_site_name(name)?;
             let svc_id = format!("python-{safe}");
             // Arranca el proceso si el grupo Python ya está en marcha (o Nginx, como señal de stack activo).
+            let nginx_up = crate::health::is_port_open(&self.config.bind, self.config.http_port);
+            if nginx_up {
+                match self.start_service(&svc_id, true) {
+                    Ok(_) => {}
+                    Err(e) => crate::process_stream::write_log_line(
+                        on_line,
+                        &format!("aviso: no se pudo arrancar {svc_id}: {e}"),
+                    ),
+                }
+            }
+        }
+        if matches!(kind, "node" | "express") {
+            let safe = crate::site::parse_site_name(name)?;
+            let svc_id = format!("node-{safe}");
             let nginx_up = crate::health::is_port_open(&self.config.bind, self.config.http_port);
             if nginx_up {
                 match self.start_service(&svc_id, true) {
@@ -1147,6 +1277,11 @@ impl DevKit {
             let svc_id = format!("python-{safe}");
             let _ = self.stop_service(&svc_id);
             let _ = python_site::release_port(&self.paths, &safe);
+        }
+        if node_site::is_node_site(&project) {
+            let svc_id = format!("node-{safe}");
+            let _ = self.stop_service(&svc_id);
+            let _ = node_site::release_port(&self.paths, &safe);
         }
         create::delete_site(&self.paths, name)?;
         self.reload_sites()?;

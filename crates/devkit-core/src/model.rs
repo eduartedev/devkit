@@ -87,6 +87,7 @@ pub enum SiteKind {
     #[default]
     Php,
     Python,
+    Node,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +106,10 @@ pub struct Site {
     pub python_runtime: Option<String>,
     #[serde(default)]
     pub python_port: Option<u16>,
+    #[serde(default)]
+    pub node_runtime: Option<String>,
+    #[serde(default)]
+    pub node_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +118,8 @@ pub struct StackStatus {
     pub php_version: String,
     #[serde(default)]
     pub python_version: String,
+    #[serde(default)]
+    pub node_ready: bool,
     pub services: Vec<ServiceSnapshot>,
     pub sites: Vec<Site>,
     pub dns: String,
