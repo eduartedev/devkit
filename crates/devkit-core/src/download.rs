@@ -384,6 +384,19 @@ pub fn python_install_only_zip(major: &str) -> Result<(String, String, String)> 
     Ok((major.to_string(), url, sha))
 }
 
+/// Igual que `python_install_only_zip`, pero el primer campo es el stamp del asset (p. ej. `3.13.2+20250205`).
+pub fn python_install_only_latest(major: &str, triple: &str) -> Result<(String, String, String)> {
+    let body = github_latest_body("astral-sh/python-build-standalone")?;
+    let (name, url, sha) = pick_python_install_only(&body, major, triple)?;
+    let stamp = name
+        .trim_start_matches("cpython-")
+        .split('-')
+        .next()
+        .unwrap_or(major)
+        .to_string();
+    Ok((stamp, url, sha))
+}
+
 /// Extrae un `.tar.gz` rechazando rutas fuera de `dest` (zip-slip).
 pub fn untar_gz_safe(archive_path: &Path, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)?;

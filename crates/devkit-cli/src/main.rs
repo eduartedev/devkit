@@ -79,6 +79,16 @@ enum Commands {
         #[command(subcommand)]
         cmd: LogsCmd,
     },
+    /// Cron de scripts por sitio (Programador de tareas de Windows)
+    Cron {
+        #[command(subcommand)]
+        cmd: CronCmd,
+    },
+    /// Actualizaciones de PHP / Python / Node (parches y majors)
+    Update {
+        #[command(subcommand)]
+        cmd: UpdateCmd,
+    },
     #[command(hide = true)]
     DnsServe,
 }
@@ -122,6 +132,53 @@ enum LogsCmd {
         query: String,
         #[arg(long, default_value_t = 50)]
         max: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum CronCmd {
+    /// Lista jobs de `.devkit-cron.toml`
+    List {
+        site: Option<String>,
+    },
+    /// Registra/actualiza tareas en el Programador de Windows
+    Sync {
+        site: Option<String>,
+    },
+    /// Elimina las tareas programadas
+    Disable {
+        site: Option<String>,
+    },
+    /// Ejecuta un job (lo usa también el Programador de tareas)
+    Run {
+        site: String,
+        job: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Consulta PHP/Python/Node y guarda caché
+    Check {
+        /// Solo escribe caché (para la tarea programada)
+        #[arg(long)]
+        cache: bool,
+    },
+    /// Instala un candidato sin activarlo
+    Install {
+        id: String,
+    },
+    /// Activa un candidato ya instalado (use php/python o swap Node)
+    Activate {
+        id: String,
+    },
+    /// Programa o quita la comprobación semanal
+    Schedule {
+        #[arg(long)]
+        off: bool,
+        /// Hora HH:MM (lunes)
+        #[arg(long, default_value = "10:00")]
+        at: String,
     },
 }
 
@@ -302,6 +359,91 @@ fn run() -> devkit_core::Result<()> {
                         println!("{h}");
                     }
                 }
+            }
+        },
+        Commands::Cron { cmd } => match cmd {
+            CronCmd::List { site } => {
+                let jobs = kit.cron_list(site.as_deref())?;
+                if jobs.is_empty() {
+                    println!("(sin jobs; crea www/<sitio>/.devkit-cron.toml y ejecuta sync)");
+                }
+                for j in jobs {
+                    let reg = if j.registered { "ok" } else { "-" };
+                    println!(
+                        "[{reg}] {}/{}  {} {}  {}  {}",
+                        j.site,
+                        j.id,
+                        j.every,
+                        j.at,
+                        j.argv.join(" "),
+                        j.task_name
+                    );
+                }
+            }
+            CronCmd::Sync { site } => {
+                for line in kit.cron_sync(site.as_deref())? {
+                    println!("{line}");
+                }
+            }
+            CronCmd::Disable { site } => {
+                let lines = kit.cron_disable(site.as_deref())?;
+                if lines.is_empty() {
+                    println!("(nada que desactivar)");
+                }
+                for line in lines {
+                    println!("{line}");
+                }
+            }
+            CronCmd::Run { site, job } => {
+                kit.cron_run(&site, &job, &mut |line| print!("{line}"))?;
+            }
+        },
+        Commands::Update { cmd } => match cmd {
+            UpdateCmd::Check { cache } => {
+                let list = kit.update_check()?;
+                if !cache {
+                    if list.is_empty() {
+                        println!("todo al día");
+                    }
+                    for c in &list {
+                        println!(
+                            "  {}  [{}/{}]  {} → {}  ({})",
+                            c.id,
+                            c.component.as_str(),
+                            c.kind.as_str(),
+                            c.installed,
+                            c.available,
+                            c.detail
+                        );
+                    }
+                    println!(
+                        "siguiente: devkit update install <id>  luego  devkit update activate <id>"
+                    );
+                } else {
+                    println!("caché: {} candidato(s)", list.len());
+                }
+            }
+            UpdateCmd::Install { id } => {
+                let cand =
+                    kit.update_install(&id, &mut |line| print!("{line}"))?;
+                println!(
+                    "instalado {} ({}). ¿Activar? → devkit update activate {}",
+                    cand.id, cand.available, cand.id
+                );
+            }
+            UpdateCmd::Activate { id } => {
+                println!("{}", kit.update_activate(&id)?);
+            }
+            UpdateCmd::Schedule { off, at } => {
+                println!("{}", kit.update_schedule(!off, &at)?);
+                println!(
+                    "programada={}",
+                    if kit.update_schedule_status() {
+                        "sí"
+                    } else {
+                        "no"
+                    }
+                );
             }
         },
         Commands::DnsServe => {

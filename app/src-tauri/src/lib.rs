@@ -294,6 +294,71 @@ async fn use_python(state: State<'_, KitState>, version: String) -> Result<Stack
 }
 
 #[tauri::command]
+async fn update_check(state: State<'_, KitState>) -> Result<Vec<devkit_core::UpdateCandidate>, String> {
+    with_heavy(&state, "update-check", |kit| kit.update_check().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn update_cache(state: State<'_, KitState>) -> Result<devkit_core::UpdateCache, String> {
+    with_kit(&state, |kit| kit.update_cache().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn update_install(
+    state: State<'_, KitState>,
+    id: String,
+) -> Result<devkit_core::UpdateCandidate, String> {
+    with_heavy(&state, "update-install", move |kit| {
+        kit.update_install(&id, &mut |_| {}).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_activate(state: State<'_, KitState>, id: String) -> Result<String, String> {
+    with_heavy(&state, "update-activate", move |kit| {
+        kit.update_activate(&id).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_schedule(
+    state: State<'_, KitState>,
+    enable: bool,
+    at: String,
+) -> Result<String, String> {
+    with_heavy(&state, "update-schedule", move |kit| {
+        kit.update_schedule(enable, &at).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_schedule_status(state: State<'_, KitState>) -> Result<bool, String> {
+    with_kit(&state, |kit| Ok(kit.update_schedule_status())).await
+}
+
+#[tauri::command]
+async fn cron_list(
+    state: State<'_, KitState>,
+    site: Option<String>,
+) -> Result<Vec<devkit_core::CronJobInfo>, String> {
+    with_kit(&state, move |kit| kit.cron_list(site.as_deref()).map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn cron_sync(
+    state: State<'_, KitState>,
+    site: Option<String>,
+) -> Result<Vec<String>, String> {
+    with_heavy(&state, "cron-sync", move |kit| {
+        kit.cron_sync(site.as_deref()).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn enable_ssl(state: State<'_, KitState>) -> Result<String, String> {
     with_heavy(&state, "ssl", |kit| kit.enable_ssl().map_err(map_err)).await
 }
@@ -555,6 +620,14 @@ pub fn run() {
             use_php,
             python_versions,
             use_python,
+            update_check,
+            update_cache,
+            update_install,
+            update_activate,
+            update_schedule,
+            update_schedule_status,
+            cron_list,
+            cron_sync,
             enable_ssl,
             pack_portable,
             open_in_browser

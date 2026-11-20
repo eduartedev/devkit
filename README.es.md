@@ -11,6 +11,8 @@ Sirve para desarrollar y probar aplicaciones PHP en tu PC sin montar Nginx, PHP 
 - **HTTP/HTTPS** con Nginx (puerto HTTP por defecto `8080`, HTTPS `8443` tras configurar SSL)
 - **Varias versiones de PHP** (8.3, 8.4, 8.5) en `bin/php/`; cambia con `devkit php use`
 - **Python** (3.12, 3.13, 3.14) en `bin/python/`; sitios Flask/FastAPI/Django con venv; `devkit python use`
+- **Cron** por sitio con `www/<sitio>/.devkit-cron.toml` → Programador de tareas (`devkit cron sync`)
+- **Actualizaciones** de PHP/Python/Node (parches y majors): `devkit update check` → install → activate
 - **MariaDB** para bases locales; credenciales en `etc/devkit/secrets/`
 - **Opcional** Redis, Mailpit y mkcert con `devkit setup --full` (Node y Composer van en el setup básico)
 - **Sitios** como carpetas en `www/` → hostnames `nombre.<tld>` (TLD por defecto `test`)
@@ -83,6 +85,10 @@ devkit create python mi-script
 devkit create flask mi-api
 devkit create fastapi mi-svc
 devkit create django mi-web
+devkit cron list | sync | disable [sitio]
+devkit cron run <sitio> <job>
+devkit update check | install <id> | activate <id>
+devkit update schedule [--off] [--at 10:00]
 devkit ssl
 devkit pack
 devkit terminal

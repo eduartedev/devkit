@@ -1356,6 +1356,92 @@ impl DevKit {
     pub fn default_url(&self) -> String {
         format!("http://{}:{}/", self.config.bind, self.config.http_port)
     }
+
+    // --- Cron de sitios ---
+
+    pub fn cron_list(&self, site: Option<&str>) -> Result<Vec<crate::site_cron::CronJobInfo>> {
+        match site {
+            Some(s) => crate::site_cron::list_site_jobs(&self.paths, s),
+            None => crate::site_cron::list_all_jobs(&self.paths),
+        }
+    }
+
+    pub fn cron_sync(&self, site: Option<&str>) -> Result<Vec<String>> {
+        match site {
+            Some(s) => crate::site_cron::sync_site(&self.paths, &self.config, s),
+            None => crate::site_cron::sync_all(&self.paths, &self.config),
+        }
+    }
+
+    pub fn cron_disable(&self, site: Option<&str>) -> Result<Vec<String>> {
+        match site {
+            Some(s) => crate::site_cron::disable_site(&self.paths, s),
+            None => crate::site_cron::disable_all(&self.paths),
+        }
+    }
+
+    pub fn cron_run(
+        &self,
+        site: &str,
+        job_id: &str,
+        on_line: &mut impl FnMut(&str),
+    ) -> Result<()> {
+        crate::site_cron::run_job(&self.paths, &self.config, site, job_id, on_line)
+    }
+
+    // --- Updates ---
+
+    pub fn update_check(&self) -> Result<Vec<crate::update::UpdateCandidate>> {
+        crate::update::check_updates(&self.paths, &self.config)
+    }
+
+    pub fn update_cache(&self) -> Result<crate::update::UpdateCache> {
+        crate::update::UpdateCache::load(&self.paths)
+    }
+
+    pub fn update_install(
+        &mut self,
+        id: &str,
+        on_line: &mut impl FnMut(&str),
+    ) -> Result<crate::update::UpdateCandidate> {
+        // No muta config.php_version / python_version.
+        crate::update::install_candidate(&self.paths, &self.config, id, on_line)
+    }
+
+    pub fn update_activate(&mut self, id: &str) -> Result<String> {
+        let msg = crate::update::activate_candidate(&self.paths, &mut self.config, id)?;
+        // Reinicia el servicio afectado si estaba arriba.
+        if id.starts_with("php-") {
+            let _ = self.stop_service("php");
+            let _ = self.start_service("php", true);
+        } else if id.starts_with("python-") {
+            let _ = self.stop_service("python");
+            let _ = self.start_service("python", true);
+        }
+        Ok(msg)
+    }
+
+    pub fn update_schedule(&self, enable: bool, at: &str) -> Result<String> {
+        if enable {
+            crate::site_cron::schedule_update_check(at)?;
+            Ok(format!(
+                "tarea {} programada (semanal lun {})",
+                crate::site_cron::update_check_task_name(),
+                at
+            ))
+        } else {
+            let removed = crate::site_cron::disable_update_check()?;
+            Ok(if removed {
+                "tarea update-check eliminada".into()
+            } else {
+                "no había tarea update-check".into()
+            })
+        }
+    }
+
+    pub fn update_schedule_status(&self) -> bool {
+        crate::site_cron::update_check_scheduled()
+    }
 }
 
 fn mysql_force_password_sql(desired: &DbCredentials) -> String {

@@ -102,6 +102,15 @@ type Stack = {
   port_checks?: PortCheck[];
 };
 
+type UpdateCandidate = {
+  id: string;
+  component: string;
+  kind: string;
+  installed: string;
+  available: string;
+  detail: string;
+};
+
 const PORT_FIELDS: { key: keyof PortsSettings; label: MessageKey }[] = [
   { key: "http_port", label: "portHttp" },
   { key: "https_port", label: "portHttps" },
@@ -181,6 +190,10 @@ export default function App() {
   const [appError, setAppError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("0.2.0");
+  const [updates, setUpdates] = useState<UpdateCandidate[]>([]);
+  const [updatePendingActivate, setUpdatePendingActivate] = useState<string | null>(
+    null,
+  );
   const moreRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -217,6 +230,9 @@ export default function App() {
     invoke<string[]>("php_versions").then(setPhp).catch(() => {});
     invoke<string[]>("python_versions").then(setPython).catch(() => {});
     getVersion().then(setAppVersion).catch(() => {});
+    invoke<{ candidates: UpdateCandidate[] }>("update_cache")
+      .then((c) => setUpdates(c.candidates ?? []))
+      .catch(() => {});
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -673,6 +689,45 @@ export default function App() {
               >
                 {t("setupFull")}
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("update-check", async () => {
+                    const list = await invoke<UpdateCandidate[]>("update_check");
+                    setUpdates(list);
+                    return list;
+                  });
+                }}
+              >
+                {t("checkUpdates")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("cron-sync", () => invoke("cron_sync", { site: null }));
+                }}
+              >
+                {t("syncCron")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("update-schedule", () =>
+                    invoke("update_schedule", { enable: true, at: "10:00" }),
+                  );
+                }}
+              >
+                {t("scheduleUpdates")}
+              </button>
 
               <p className="tools-group">{t("groupDb")}</p>
               <button
@@ -763,6 +818,59 @@ export default function App() {
           )}
         </div>
       </section>
+
+      {updates.length > 0 && (
+        <div className="log" role="status">
+          <p>{t("updatesBanner", { count: updates.length })}</p>
+          <ul>
+            {updates.map((u) => (
+              <li key={u.id}>
+                {u.id}: {u.installed} → {u.available}{" "}
+                <button
+                  type="button"
+                  className="mini"
+                  disabled={!!busy}
+                  onClick={() =>
+                    runHeavy("update-install", async () => {
+                      await invoke("update_install", { id: u.id });
+                      setUpdatePendingActivate(u.id);
+                      return u.id;
+                    })
+                  }
+                >
+                  {t("updatesInstall")}
+                </button>{" "}
+                {(updatePendingActivate === u.id || u.kind === "major") && (
+                  <button
+                    type="button"
+                    className="mini"
+                    disabled={!!busy}
+                    onClick={() =>
+                      runHeavy("update-activate", async () => {
+                        const msg = await invoke<string>("update_activate", {
+                          id: u.id,
+                        });
+                        setUpdatePendingActivate(null);
+                        setUpdates((prev) => prev.filter((x) => x.id !== u.id));
+                        return msg;
+                      })
+                    }
+                  >
+                    {t("updatesActivate")}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="mini"
+            onClick={() => setUpdates([])}
+          >
+            {t("updatesDismiss")}
+          </button>
+        </div>
+      )}
 
       {(busy || log || stack?.warnings?.length) && (
         <pre className="log">

@@ -184,6 +184,39 @@ fn install_nginx(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     Ok(())
 }
 
+/// Instala o reinstala un major de PHP (si `force`, borra el directorio previo).
+pub fn install_php_version(
+    paths: &Paths,
+    major: &str,
+    cfg: &AppConfig,
+    force: bool,
+) -> Result<Vec<String>> {
+    let mut report = SetupReport { lines: Vec::new() };
+    if force {
+        let dir = paths.php_dir(major);
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+            report.push(format!("php {major}: directorio previo eliminado"));
+        }
+    }
+    install_php(paths, major, cfg, &mut report)?;
+    Ok(report.lines)
+}
+
+/// Instala o reinstala un major de Python (si `force`, borra el directorio previo).
+pub fn install_python_version(paths: &Paths, major: &str, force: bool) -> Result<Vec<String>> {
+    let mut report = SetupReport { lines: Vec::new() };
+    if force {
+        let dir = paths.python_dir(major);
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+            report.push(format!("python {major}: directorio previo eliminado"));
+        }
+    }
+    install_python(paths, major, &mut report)?;
+    Ok(report.lines)
+}
+
 fn install_php(paths: &Paths, major: &str, cfg: &AppConfig, report: &mut SetupReport) -> Result<()> {
     if !crate::php_version::supported_php_major(major) {
         return Err(Error::msg(format!(
