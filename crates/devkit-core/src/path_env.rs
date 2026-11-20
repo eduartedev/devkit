@@ -7,6 +7,14 @@ use std::path::{Path, PathBuf};
 pub fn devkit_path_dirs(paths: &Paths, cfg: &AppConfig) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     push_dir(&mut out, paths.php_dir(&cfg.php_version));
+    if paths.python_exe(&cfg.python_version).is_file() {
+        let py_dir = paths.python_dir(&cfg.python_version);
+        push_dir(&mut out, py_dir.clone());
+        let scripts = py_dir.join("Scripts");
+        if scripts.is_dir() {
+            push_dir(&mut out, scripts);
+        }
+    }
     if paths.node_exe().is_file() {
         push_dir(&mut out, paths.bin.join("node"));
     }
@@ -303,5 +311,25 @@ mod tests {
                 .map(|d| d.ends_with("composer") || d.ends_with("composer\\"))
                 .unwrap_or(false)
         );
+    }
+
+    #[test]
+    fn python_path_only_when_exe_exists() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
+        let paths = Paths::from_root(root.to_path_buf());
+        let cfg = AppConfig {
+            python_version: "3.13".into(),
+            ..AppConfig::default()
+        };
+        let without = devkit_path_dirs(&paths, &cfg);
+        assert!(!without.iter().any(|d| d.contains("python")));
+
+        std::fs::create_dir_all(root.join("bin/python/3.13/Scripts")).unwrap();
+        std::fs::write(root.join("bin/python/3.13/python.exe"), []).unwrap();
+        let with = devkit_path_dirs(&paths, &cfg);
+        assert!(with.iter().any(|d| d.ends_with(r"bin\python\3.13") || d.ends_with("bin/python/3.13")));
+        assert!(with.iter().any(|d| d.contains("Scripts")));
     }
 }

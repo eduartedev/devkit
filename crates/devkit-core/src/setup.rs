@@ -1,6 +1,6 @@
 use crate::download::{
     composer_latest, download_verified, git_mingit_zip, github_latest_asset, node_lts_zip,
-    php_nts_from_releases, unzip_safe,
+    php_nts_from_releases, python_install_only_zip, untar_gz_safe, unzip_safe,
 };
 use crate::error::{Error, Result};
 use crate::paths::{AppConfig, Paths};
@@ -27,29 +27,38 @@ impl SetupReport {
     }
 }
 
-pub fn run_setup(paths: &Paths, cfg: &AppConfig, full: bool, php_major: Option<&str>) -> Result<SetupReport> {
+pub fn run_setup(
+    paths: &Paths,
+    cfg: &AppConfig,
+    full: bool,
+    php_major: Option<&str>,
+    python_major: Option<&str>,
+) -> Result<SetupReport> {
     paths.ensure()?;
     write_default_index(paths)?;
     let mut report = SetupReport { lines: Vec::new() };
     let php_major = php_major.unwrap_or(cfg.php_version.as_str());
+    let python_major = python_major.unwrap_or(cfg.python_version.as_str());
     let offline = paths.root.join("offline");
     let bundled = offline_bundle_ready(&offline);
     let online = bundled && crate::download::internet_available();
     let mut used_bundle = false;
 
     if !full && prefer_bundled_stack(online, bundled) {
-        report.push("sin internet: usando Nginx, PHP, MariaDB, Composer, Node y Git del instalador");
+        report.push(
+            "sin internet: usando Nginx, PHP, MariaDB, Composer, Node, Git y Python del instalador",
+        );
         import_offline_bundle(&offline, paths)?;
         used_bundle = true;
     } else if !full && bundled {
-        report.push("hay internet: descargando Nginx, PHP, MariaDB, Composer, Node y Git");
+        report.push("hay internet: descargando Nginx, PHP, MariaDB, Composer, Node, Git y Python");
     }
 
-    if let Err(err) = install_components(paths, cfg, full, php_major, &mut report) {
+    if let Err(err) = install_components(paths, cfg, full, php_major, python_major, &mut report) {
         if !full && bundled && !used_bundle {
             report.push("la descarga falló: usando los binarios del instalador");
             import_offline_bundle(&offline, paths)?;
-            install_components(paths, cfg, full, php_major, &mut report)?;
+            install_components(paths, cfg, full, php_major, python_major, &mut report)?;
         } else {
             return Err(err);
         }
@@ -66,6 +75,7 @@ fn install_components(
     cfg: &AppConfig,
     full: bool,
     php_major: &str,
+    python_major: &str,
     report: &mut SetupReport,
 ) -> Result<()> {
     install_nginx(paths, report)?;
@@ -81,6 +91,14 @@ fn install_components(
     install_adminer(paths, report)?;
     install_node(paths, report)?;
     install_git(paths, report)?;
+    install_python(paths, python_major, report)?;
+    if full {
+        for extra in crate::python_version::SUPPORTED_PYTHON_MAJORS {
+            if *extra != python_major {
+                let _ = install_python(paths, extra, report);
+            }
+        }
+    }
 
     if full {
         install_redis(paths, cfg, report)?;
@@ -89,7 +107,7 @@ fn install_components(
         install_composer(paths, report)?;
     } else {
         install_composer(paths, report)?;
-        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer, Node y Git). Setup completo añade Redis, Mailpit y mkcert");
+        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer, Node, Git y Python). Setup completo añade Redis, Mailpit, mkcert y más majors de PHP/Python");
     }
 
     let _ = crate::secrets::mysql_credentials(paths)?;
@@ -336,6 +354,36 @@ fn install_git(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     Ok(())
 }
 
+fn install_python(paths: &Paths, major: &str, report: &mut SetupReport) -> Result<()> {
+    if !crate::python_version::supported_python_major(major) {
+        return Err(Error::msg(format!(
+            "Python {major} no soportado ({})",
+            crate::python_version::SUPPORTED_PYTHON_MAJORS.join(", ")
+        )));
+    }
+    let dest = paths.python_dir(major);
+    if paths.python_exe(major).is_file() {
+        report.push(format!("python {major}: ya instalado"));
+        return Ok(());
+    }
+    report.push(format!("python {major}: consultando python-build-standalone…"));
+    let (_ver, url, sha) = python_install_only_zip(major)?;
+    let archive = paths.tmp.join(format!("cpython-{major}-install_only.tar.gz"));
+    download_verified(&url, &archive, Some(&sha))?;
+    if dest.exists() {
+        fs::remove_dir_all(&dest)?;
+    }
+    untar_gz_safe(&archive, &dest)?;
+    if !paths.python_exe(major).is_file() {
+        return Err(Error::msg(format!(
+            "python.exe no apareció en {}",
+            dest.display()
+        )));
+    }
+    report.push(format!("python {major}: instalado"));
+    Ok(())
+}
+
 fn install_composer(paths: &Paths, report: &mut SetupReport) -> Result<()> {
     if paths.composer().exists() {
         report.push("composer: ya instalado");
@@ -366,6 +414,22 @@ pub fn list_php_versions(paths: &Paths) -> Result<Vec<String>> {
     for e in fs::read_dir(dir)? {
         let e = e?;
         if e.path().is_dir() && e.path().join("php-cgi.exe").exists() {
+            out.push(e.file_name().to_string_lossy().into_owned());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+pub fn list_python_versions(paths: &Paths) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let dir = paths.bin.join("python");
+    if !dir.exists() {
+        return Ok(out);
+    }
+    for e in fs::read_dir(dir)? {
+        let e = e?;
+        if e.path().is_dir() && e.path().join("python.exe").exists() {
             out.push(e.file_name().to_string_lossy().into_owned());
         }
     }
@@ -477,9 +541,10 @@ mod tests {
         write_file(&paths.composer(), b"composer");
         write_file(&paths.bin.join("node").join("node.exe"), b"node");
         write_file(&paths.bin.join("git").join("cmd").join("git.exe"), b"git");
+        write_file(&paths.python_exe(&cfg.python_version), b"python");
         write_file(&paths.www.join("adminer").join("index.php"), b"<?php");
 
-        let report = run_setup(&paths, &cfg, false, None).unwrap();
+        let report = run_setup(&paths, &cfg, false, None, None).unwrap();
         let text = report.lines.join("\n");
         assert!(text.contains("nginx: ya instalado"), "{text}");
         assert!(text.contains("php 8.3: ya instalado"), "{text}");
@@ -488,6 +553,7 @@ mod tests {
         assert!(text.contains("composer: ya instalado"), "{text}");
         assert!(text.contains("node: ya instalado"), "{text}");
         assert!(text.contains("git: ya instalado"), "{text}");
+        assert!(text.contains("python 3.13: ya instalado"), "{text}");
         assert!(
             !text.to_ascii_lowercase().contains("descargando"),
             "{text}"

@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
-use crate::model::Site;
+use crate::model::{Site, SiteKind};
 use crate::paths::{AppConfig, Paths};
+use crate::python_site::{self, is_python_site};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -121,21 +122,48 @@ pub fn scan_sites(paths: &Paths, cfg: &AppConfig) -> Result<Vec<Site>> {
             continue;
         };
         let project = path;
-        let root = detect_web_root(&project);
         let hostname = format!("{name}.{}", cfg.tld);
         let url = if cfg.ssl {
             format!("https://{hostname}:{}", cfg.https_port)
         } else {
             format!("http://{hostname}:{}", cfg.http_port)
         };
-        sites.push(Site {
-            name,
-            hostname,
-            root,
-            php_version: cfg.php_version.clone(),
-            ssl: cfg.ssl,
-            url,
-        });
+        if is_python_site(&project) {
+            let marker = match python_site::read_marker(&project) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let port = match python_site::ensure_port(paths, &name) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            sites.push(Site {
+                name,
+                hostname,
+                root: project,
+                php_version: cfg.php_version.clone(),
+                ssl: cfg.ssl,
+                url,
+                kind: SiteKind::Python,
+                python_version: Some(marker.version),
+                python_runtime: Some(marker.runtime.as_str().to_string()),
+                python_port: Some(port),
+            });
+        } else {
+            let root = detect_web_root(&project);
+            sites.push(Site {
+                name,
+                hostname,
+                root,
+                php_version: cfg.php_version.clone(),
+                ssl: cfg.ssl,
+                url,
+                kind: SiteKind::Php,
+                python_version: None,
+                python_runtime: None,
+                python_port: None,
+            });
+        }
     }
     Ok(sites)
 }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "devkit", about = "Entorno local portable (Nginx + PHP + MariaDB)", version)]
+#[command(name = "devkit", about = "Entorno local portable (Nginx + PHP/Python + MariaDB)", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -14,12 +14,15 @@ struct Cli {
 enum Commands {
     /// Descarga binarios oficiales (HTTPS + SHA-256)
     Setup {
-        /// Redis, Mailpit y mkcert. Node y Git van en el setup básico.
+        /// Redis, Mailpit y mkcert. Más majors de PHP/Python. Node, Git y Python van en el setup básico.
         #[arg(long)]
         full: bool,
         /// Major de PHP (8.3, 8.4 o 8.5)
         #[arg(long)]
         php: Option<String>,
+        /// Major de Python (3.12, 3.13 o 3.14)
+        #[arg(long)]
+        python: Option<String>,
     },
     /// Arranca el stack (detach por defecto)
     Start {
@@ -39,6 +42,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: PhpCmd,
     },
+    /// Cambia o lista versiones de Python
+    Python {
+        #[command(subcommand)]
+        cmd: PythonCmd,
+    },
     /// Crea un proyecto en www/
     Create {
         kind: String,
@@ -52,7 +60,7 @@ enum Commands {
     },
     /// Terminal con PATH de DevKit
     Terminal,
-    /// Añade PHP, MariaDB, Node, Git y Composer al PATH de Windows
+    /// Añade PHP, Python, MariaDB, Node, Git y Composer al PATH de Windows
     Path {
         /// Quita las carpetas de este DevKit del PATH (usuario y sistema)
         #[arg(long)]
@@ -77,6 +85,12 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum PhpCmd {
+    List,
+    Use { version: String },
+}
+
+#[derive(Subcommand)]
+enum PythonCmd {
     List,
     Use { version: String },
 }
@@ -125,8 +139,8 @@ fn run() -> devkit_core::Result<()> {
     let cli = Cli::parse();
     let mut kit = DevKit::load()?;
     match cli.cmd {
-        Commands::Setup { full, php } => {
-            for line in kit.setup(full, php.as_deref())? {
+        Commands::Setup { full, php, python } => {
+            for line in kit.setup(full, php.as_deref(), python.as_deref())? {
                 println!("{line}");
             }
         }
@@ -202,9 +216,26 @@ fn run() -> devkit_core::Result<()> {
                 println!("PHP {version} activo");
             }
         },
+        Commands::Python { cmd } => match cmd {
+            PythonCmd::List => {
+                println!("activo: {}", kit.config.python_version);
+                for v in kit.python_versions()? {
+                    println!("{v}");
+                }
+            }
+            PythonCmd::Use { version } => {
+                kit.use_python(&version)?;
+                println!("Python {version} activo");
+            }
+        },
         Commands::Create { kind, name } => {
             let p = kit.create_site_with_log(&kind, &name, &mut |line| print!("{line}"))?;
-            if kind != "laravel" {
+            if kind != "laravel"
+                && kind != "python"
+                && kind != "flask"
+                && kind != "fastapi"
+                && kind != "django"
+            {
                 println!("{}", p.display());
             }
         }
@@ -288,6 +319,9 @@ fn run() -> devkit_core::Result<()> {
 fn print_status(st: &devkit_core::StackStatus) {
     println!("root {}", st.root.display());
     println!("php  {}", st.php_version);
+    if !st.python_version.is_empty() {
+        println!("python {}", st.python_version);
+    }
     println!("dns  {}", st.dns);
     for s in &st.services {
         println!(

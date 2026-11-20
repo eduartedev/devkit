@@ -14,7 +14,8 @@ use crate::secrets::{
     heal_mysql_secret_toward_empty, local_default_mysql_credentials, mysql_credentials,
     redis_password, write_mysql_credentials, DbCredentials,
 };
-use crate::setup::{list_php_versions, log_setup, run_setup};
+use crate::python_site::{self, PythonRuntime};
+use crate::setup::{list_php_versions, list_python_versions, log_setup, run_setup};
 use crate::site::scan_sites;
 use crate::ssl;
 use crate::supervisor::Supervisor;
@@ -57,14 +58,25 @@ impl DevKit {
         })
     }
 
-    pub fn setup(&mut self, full: bool, php: Option<&str>) -> Result<Vec<String>> {
+    pub fn setup(
+        &mut self,
+        full: bool,
+        php: Option<&str>,
+        python: Option<&str>,
+    ) -> Result<Vec<String>> {
         if let Some(v) = php {
             self.config.php_version = v.to_string();
+        }
+        if let Some(v) = python {
+            self.config.python_version = v.to_string();
+        }
+        if php.is_some() || python.is_some() {
             self.config.save(&self.paths.config_file())?;
         }
-        let report = run_setup(&self.paths, &self.config, full, php)?;
+        let report = run_setup(&self.paths, &self.config, full, php, python)?;
         log_setup(&self.paths, &report)?;
         self.reload_sites()?;
+        let _ = crate::path_env::sync_configured(&self.paths, &self.config);
         Ok(report.lines)
     }
 
@@ -79,7 +91,54 @@ impl DevKit {
         if self.paths.mailpit().exists() {
             specs.push(self.spec_mailpit()?);
         }
+        for site in scan_sites(&self.paths, &self.config)? {
+            if let Some(spec) = self.spec_python_site(&site)? {
+                specs.push(spec);
+            }
+        }
         Ok(specs)
+    }
+
+    /// Expande el id virtual `python` a todos los `python-<sitio>`.
+    pub fn expand_service_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        let specs = self.specs()?;
+        let python_ids: Vec<String> = specs
+            .iter()
+            .filter(|s| s.id.starts_with("python-"))
+            .map(|s| s.id.clone())
+            .collect();
+        Ok(crate::paths::expand_auto_start_service_ids(ids, &python_ids))
+    }
+
+    fn spec_python_site(&self, site: &crate::model::Site) -> Result<Option<ServiceSpec>> {
+        if site.kind != crate::model::SiteKind::Python {
+            return Ok(None);
+        }
+        let runtime_str = site
+            .python_runtime
+            .as_deref()
+            .ok_or_else(|| Error::msg(format!("sitio Python '{}' sin runtime", site.name)))?;
+        let runtime = PythonRuntime::parse(runtime_str)?;
+        let port = site
+            .python_port
+            .ok_or_else(|| Error::msg(format!("sitio Python '{}' sin puerto", site.name)))?;
+        let venv_py = python_site::venv_python(&site.root);
+        let args = python_site::build_argv(runtime, &site.root, &self.config.bind, port)?;
+        Ok(Some(ServiceSpec {
+            id: format!("python-{}", site.name),
+            display_name: format!("Python ({})", site.name),
+            binary: venv_py,
+            args,
+            env: vec![
+                ("DEVKIT_BIND".into(), self.config.bind.clone()),
+                ("DEVKIT_PORT".into(), port.to_string()),
+            ],
+            cwd: Some(site.root.clone()),
+            bind_host: self.config.bind.clone(),
+            port,
+            pidfile: self.paths.logs.join(format!("python-{}.pid", site.name)),
+            stop: StopKind::Terminate,
+        }))
     }
 
     fn spec_nginx(&self) -> Result<ServiceSpec> {
@@ -668,13 +727,75 @@ impl DevKit {
         Ok(crate::ports::check_many(&rows))
     }
 
+    /// Fila de grupo Python para el panel (no es un proceso real; start/stop expanden a `python-*`).
+    fn python_group_snapshot(&self, specs: &[ServiceSpec]) -> ServiceSnapshot {
+        let v = &self.config.python_version;
+        let installed = self.paths.python_exe(v).is_file();
+        let py_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.id.starts_with("python-"))
+            .collect();
+        let running = py_specs
+            .iter()
+            .filter(|s| {
+                matches!(
+                    self.supervisor.snapshot(s).status,
+                    ServiceStatus::Running
+                )
+            })
+            .count();
+        let (status, detail) = if !installed {
+            (ServiceStatus::Stopped, format!("no instalado — setup --python {v}"))
+        } else if py_specs.is_empty() {
+            (ServiceStatus::Stopped, "sin sitios Python".into())
+        } else if running == py_specs.len() {
+            (
+                ServiceStatus::Running,
+                format!("{running}/{} sitios", py_specs.len()),
+            )
+        } else if running > 0 {
+            (
+                ServiceStatus::Starting,
+                format!("{running}/{} sitios", py_specs.len()),
+            )
+        } else {
+            (
+                ServiceStatus::Stopped,
+                format!("0/{} sitios", py_specs.len()),
+            )
+        };
+        ServiceSnapshot {
+            id: "python".into(),
+            display_name: format!("Python {v}"),
+            status,
+            bind: self.config.bind.clone(),
+            port: python_site::PYTHON_PORT_BASE,
+            pid: None,
+            detail,
+        }
+    }
+
+    /// Lista para panel/CLI: stack fijo + grupo Python; oculta `python-<sitio>`.
+    fn services_for_ui(&self, specs: &[ServiceSpec]) -> Vec<ServiceSnapshot> {
+        let mut services: Vec<_> = specs
+            .iter()
+            .filter(|s| !s.id.starts_with("python-"))
+            .map(|s| self.supervisor.snapshot(s))
+            .collect();
+        let py = self.python_group_snapshot(specs);
+        let idx = services
+            .iter()
+            .position(|s| s.id == "nginx")
+            .map(|i| i + 1)
+            .unwrap_or(services.len().min(1));
+        services.insert(idx, py);
+        services
+    }
+
     /// Estado rápido para el panel (sin netstat en cada poll).
     pub fn status_light(&self) -> Result<StackStatus> {
         let specs = self.specs().unwrap_or_default();
-        let services: Vec<_> = specs
-            .iter()
-            .map(|s| self.supervisor.snapshot(s))
-            .collect();
+        let services = self.services_for_ui(&specs);
         let sites = scan_sites(&self.paths, &self.config)?;
         let port_checks = crate::ports::cached_port_checks_fresh(std::time::Duration::from_secs(8))
             .or_else(crate::ports::cached_port_checks)
@@ -697,6 +818,7 @@ impl DevKit {
         Ok(StackStatus {
             root: self.paths.root.clone(),
             php_version: self.config.php_version.clone(),
+            python_version: self.config.python_version.clone(),
             services,
             sites,
             dns: self.last_dns.clone(),
@@ -716,13 +838,12 @@ impl DevKit {
             }
         }
         st.port_checks = port_checks;
-        // Refresca detalles de servicios con info rica si hay conflicto.
         let specs = self.specs().unwrap_or_default();
-        st.services = specs
-            .iter()
-            .map(|s| self.supervisor.snapshot(s))
-            .collect();
+        st.services = self.services_for_ui(&specs);
         for svc in &mut st.services {
+            if svc.id == "python" {
+                continue;
+            }
             if let Some(check) = st.port_checks.iter().find(|c| c.service == svc.id) {
                 if check.is_conflict() {
                     svc.detail = check.summary();
@@ -746,13 +867,13 @@ impl DevKit {
 
     /// Arranca un subconjunto de servicios (orden fijo; DNS/hosts una vez).
     pub fn start_services(&mut self, ids: &[String], detach: bool) -> Result<StackStatus> {
-        let ordered = crate::paths::ordered_auto_start_ids(ids);
-        if ordered.is_empty() {
-            return self.status();
-        }
         self.paths.ensure()?;
         eprintln!("devkit: preparando sitios…");
         self.reload_sites()?;
+        let ordered = self.expand_service_ids(ids)?;
+        if ordered.is_empty() {
+            return self.status();
+        }
         eprintln!("devkit: DNS / hosts…");
         self.start_dns_or_hosts()?;
         let mut warnings = Vec::new();
@@ -830,6 +951,17 @@ impl DevKit {
 
     pub fn start_service(&mut self, id: &str, detach: bool) -> Result<ServiceSnapshot> {
         self.reload_sites()?;
+        if id == "python" {
+            let v = &self.config.python_version;
+            if !self.paths.python_exe(v).is_file() {
+                return Err(Error::msg(format!(
+                    "Python {v} no está instalado. Ejecuta `devkit setup --python {v}`"
+                )));
+            }
+            let _ = self.start_services(&["python".into()], detach)?;
+            let specs = self.specs().unwrap_or_default();
+            return Ok(self.python_group_snapshot(&specs));
+        }
         if id == "mariadb" {
             self.init_mariadb_if_needed()?;
         }
@@ -851,6 +983,13 @@ impl DevKit {
     }
 
     pub fn stop_service(&mut self, id: &str) -> Result<ServiceSnapshot> {
+        if id == "python" {
+            let specs = self.specs()?;
+            for spec in specs.iter().filter(|s| s.id.starts_with("python-")).rev() {
+                let _ = self.supervisor.stop(spec);
+            }
+            return Ok(self.python_group_snapshot(&specs));
+        }
         let spec = self
             .specs()?
             .into_iter()
@@ -922,6 +1061,30 @@ impl DevKit {
         list_php_versions(&self.paths)
     }
 
+    pub fn use_python(&mut self, version: &str) -> Result<()> {
+        if !crate::python_version::supported_python_major(version) {
+            return Err(Error::msg(format!(
+                "Python {version} no soportado; majors: {}",
+                crate::python_version::SUPPORTED_PYTHON_MAJORS.join(", ")
+            )));
+        }
+        let exe = self.paths.python_exe(version);
+        if !exe.is_file() {
+            return Err(Error::msg(format!(
+                "Python {version} no está en {}. Ejecuta `devkit setup --python {version}`",
+                exe.display()
+            )));
+        }
+        self.config.python_version = version.to_string();
+        self.config.save(&self.paths.config_file())?;
+        let _ = crate::path_env::sync_configured(&self.paths, &self.config);
+        Ok(())
+    }
+
+    pub fn python_versions(&self) -> Result<Vec<String>> {
+        list_python_versions(&self.paths)
+    }
+
     pub fn create_site(&mut self, kind: &str, name: &str) -> Result<std::path::PathBuf> {
         self.create_site_with_log(kind, name, &mut |_| {})
     }
@@ -938,15 +1101,38 @@ impl DevKit {
                 create::create_laravel(&self.paths, &self.config.php_version, name, on_line)?
             }
             "wordpress" | "wp" => create::create_wordpress(&self.paths, name)?,
+            "python" | "flask" | "fastapi" | "django" => python_site::create_python_site(
+                &self.paths,
+                &self.config.python_version,
+                kind,
+                name,
+                &self.config.tld,
+                on_line,
+            )?,
             other => {
                 return Err(Error::msg(format!(
-                    "tipo desconocido '{other}' (blank|laravel|wordpress)"
+                    "tipo desconocido '{other}' (blank|laravel|wordpress|python|flask|fastapi|django)"
                 )))
             }
         };
         // Regenera vhosts (Laravel → public/) y hosts.
         self.reload_sites()?;
         let _ = self.ensure_hosts();
+        if matches!(kind, "python" | "flask" | "fastapi" | "django") {
+            let safe = crate::site::parse_site_name(name)?;
+            let svc_id = format!("python-{safe}");
+            // Arranca el proceso si el grupo Python ya está en marcha (o Nginx, como señal de stack activo).
+            let nginx_up = crate::health::is_port_open(&self.config.bind, self.config.http_port);
+            if nginx_up {
+                match self.start_service(&svc_id, true) {
+                    Ok(_) => {}
+                    Err(e) => crate::process_stream::write_log_line(
+                        on_line,
+                        &format!("aviso: no se pudo arrancar {svc_id}: {e}"),
+                    ),
+                }
+            }
+        }
         crate::process_stream::write_log_line(
             on_line,
             &format!("✓ Sitio listo: {}", path.display()),
@@ -955,6 +1141,13 @@ impl DevKit {
     }
 
     pub fn delete_site(&mut self, name: &str) -> Result<String> {
+        let safe = crate::site::parse_site_name(name)?;
+        let project = self.paths.www.join(&safe);
+        if python_site::is_python_site(&project) {
+            let svc_id = format!("python-{safe}");
+            let _ = self.stop_service(&svc_id);
+            let _ = python_site::release_port(&self.paths, &safe);
+        }
         create::delete_site(&self.paths, name)?;
         self.reload_sites()?;
         let _ = self.ensure_hosts();

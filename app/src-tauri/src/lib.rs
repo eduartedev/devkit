@@ -5,7 +5,7 @@ use devkit_core::{
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -242,9 +242,11 @@ async fn setup_stack(
     state: State<'_, KitState>,
     full: bool,
     php: Option<String>,
+    python: Option<String>,
 ) -> Result<Vec<String>, String> {
     with_heavy(&state, "setup", move |kit| {
-        kit.setup(full, php.as_deref()).map_err(map_err)
+        kit.setup(full, php.as_deref(), python.as_deref())
+            .map_err(map_err)
     })
     .await
 }
@@ -265,6 +267,27 @@ async fn php_versions(state: State<'_, KitState>) -> Result<Vec<String>, String>
 async fn use_php(state: State<'_, KitState>, version: String) -> Result<StackStatus, String> {
     with_heavy(&state, "php", move |kit| {
         kit.use_php(&version).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn python_versions(state: State<'_, KitState>) -> Result<Vec<String>, String> {
+    with_kit(&state, |kit| {
+        let mut v = kit.python_versions().map_err(map_err)?;
+        if !v.contains(&kit.config.python_version) {
+            v.push(kit.config.python_version.clone());
+        }
+        Ok(v)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn use_python(state: State<'_, KitState>, version: String) -> Result<StackStatus, String> {
+    with_heavy(&state, "python", move |kit| {
+        kit.use_python(&version).map_err(map_err)?;
         kit.status_light().map_err(map_err)
     })
     .await
@@ -407,6 +430,7 @@ fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -529,6 +553,8 @@ pub fn run() {
             setup_stack,
             php_versions,
             use_php,
+            python_versions,
+            use_python,
             enable_ssl,
             pack_portable,
             open_in_browser
@@ -558,8 +584,17 @@ pub fn run() {
             let handle = app.handle().clone();
             TrayIconBuilder::new()
                 .menu(&menu)
-                .tooltip("DevKit")
+                .tooltip(format!("DevKit {}", env!("CARGO_PKG_VERSION")))
                 .icon(app.default_window_icon().unwrap().clone())
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        show_main(tray.app_handle());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "start" => {

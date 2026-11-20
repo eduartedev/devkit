@@ -184,6 +184,14 @@ impl Paths {
         }
     }
 
+    pub fn python_dir(&self, version: &str) -> PathBuf {
+        self.bin.join("python").join(version)
+    }
+
+    pub fn python_exe(&self, version: &str) -> PathBuf {
+        self.python_dir(version).join("python.exe")
+    }
+
     pub fn composer(&self) -> PathBuf {
         self.bin.join("composer").join("composer.phar")
     }
@@ -228,6 +236,9 @@ pub struct AppConfig {
     pub mailpit_smtp: u16,
     pub mailpit_ui: u16,
     pub php_version: String,
+    /// Major de Python activo en el PATH del kit (3.12 / 3.13 / 3.14).
+    #[serde(default = "default_python_version")]
+    pub python_version: String,
     pub ssl: bool,
     pub tld: String,
     /// Extensiones PHP activas (nombres sin `php_` / `.dll`). Vacío = defaults.
@@ -262,8 +273,9 @@ pub enum PathEnvScope {
 }
 
 /// IDs de servicios que se pueden auto-arrancar al abrir el panel.
-pub const AUTO_START_SERVICE_IDS: [&str; 5] =
-    ["mariadb", "php", "nginx", "redis", "mailpit"];
+/// `python` es un grupo virtual: expande a todos los `python-<sitio>`.
+pub const AUTO_START_SERVICE_IDS: [&str; 6] =
+    ["mariadb", "php", "nginx", "python", "redis", "mailpit"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -276,6 +288,10 @@ pub enum AutoStartMode {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_python_version() -> String {
+    crate::python_version::DEFAULT_PYTHON_MAJOR.to_string()
 }
 
 pub const FASTCGI_TIMEOUT_MIN: u64 = 1;
@@ -317,6 +333,7 @@ impl Default for AppConfig {
             mailpit_smtp: crate::model::MAILPIT_SMTP,
             mailpit_ui: crate::model::MAILPIT_UI,
             php_version: "8.3".to_string(),
+            python_version: default_python_version(),
             ssl: false,
             tld: "test".to_string(),
             php_extensions: default_php_extensions(),
@@ -375,6 +392,32 @@ pub fn ordered_auto_start_ids(requested: &[String]) -> Vec<String> {
         .filter(|id| requested.iter().any(|r| r == *id))
         .map(|id| id.to_string())
         .collect()
+}
+
+/// Expande el id virtual `python` a los `python-<sitio>` (no a Nginx).
+pub fn expand_auto_start_service_ids(
+    requested: &[String],
+    python_site_service_ids: &[String],
+) -> Vec<String> {
+    let ordered = ordered_auto_start_ids(requested);
+    let mut out = Vec::new();
+    for id in ordered {
+        if id == "python" {
+            for py in python_site_service_ids {
+                if py.starts_with("python-") {
+                    out.push(py.clone());
+                }
+            }
+        } else {
+            out.push(id);
+        }
+    }
+    for id in requested {
+        if id.starts_with("python-") && !out.iter().any(|x| x == id) {
+            out.push(id.clone());
+        }
+    }
+    out
 }
 
 impl AppSettings {
@@ -486,12 +529,13 @@ mod tests {
         let ids = ordered_auto_start_ids(&[
             "mailpit".into(),
             "bogus".into(),
+            "python".into(),
             "nginx".into(),
             "mariadb".into(),
         ]);
         assert_eq!(
             ids,
-            ["mariadb", "nginx", "mailpit"]
+            ["mariadb", "nginx", "python", "mailpit"]
                 .map(String::from)
                 .to_vec()
         );
@@ -502,6 +546,47 @@ mod tests {
         let mut settings = AppSettings::from_config(&AppConfig::default());
         settings.auto_start_services = vec!["docker".into()];
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_python_auto_start_group() {
+        let mut settings = AppSettings::from_config(&AppConfig::default());
+        settings.auto_start_services = vec!["python".into(), "nginx".into()];
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn expand_python_group_does_not_start_nginx() {
+        let expanded = expand_auto_start_service_ids(
+            &["python".into(), "nginx".into()],
+            &["python-blog".into(), "python-api".into()],
+        );
+        assert_eq!(
+            expanded,
+            vec![
+                "nginx".to_string(),
+                "python-blog".to_string(),
+                "python-api".to_string(),
+            ]
+        );
+        let only_py = expand_auto_start_service_ids(
+            &["python".into()],
+            &["python-blog".into()],
+        );
+        assert_eq!(only_py, vec!["python-blog".to_string()]);
+        assert!(!only_py.iter().any(|id| id == "nginx"));
+    }
+
+    #[test]
+    fn old_config_without_python_version_defaults() {
+        let raw = toml::to_string(&AppConfig::default()).unwrap();
+        let stripped = raw
+            .lines()
+            .filter(|line| !line.contains("python_version"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cfg: AppConfig = toml::from_str(&stripped).unwrap();
+        assert_eq!(cfg.python_version, "3.13");
     }
 
     #[test]
