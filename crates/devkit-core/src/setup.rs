@@ -80,25 +80,11 @@ fn install_components(
 ) -> Result<()> {
     install_nginx(paths, report)?;
     install_php(paths, php_major, cfg, report)?;
-    if full {
-        for extra in crate::php_version::SUPPORTED_PHP_MAJORS {
-            if *extra != php_major {
-                let _ = install_php(paths, extra, cfg, report);
-            }
-        }
-    }
     install_mariadb(paths, cfg, report)?;
     install_adminer(paths, report)?;
     install_node(paths, report)?;
     install_git(paths, report)?;
     install_python(paths, python_major, report)?;
-    if full {
-        for extra in crate::python_version::SUPPORTED_PYTHON_MAJORS {
-            if *extra != python_major {
-                let _ = install_python(paths, extra, report);
-            }
-        }
-    }
 
     if full {
         install_redis(paths, cfg, report)?;
@@ -107,7 +93,7 @@ fn install_components(
         install_composer(paths, report)?;
     } else {
         install_composer(paths, report)?;
-        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer, Node, Git y Python). Setup completo añade Redis, Mailpit, mkcert y más majors de PHP/Python");
+        report.push("setup básico listo (Nginx, PHP, MariaDB, Composer, Node, Git y Python). Setup completo añade Redis, Mailpit y mkcert; otras majors van con --php / --python");
     }
 
     let _ = crate::secrets::mysql_credentials(paths)?;
@@ -593,6 +579,45 @@ mod tests {
         );
         assert_eq!(fs::read(paths.nginx_exe()).unwrap(), b"nginx");
         assert_eq!(fs::read(paths.composer()).unwrap(), b"composer");
+    }
+
+    #[test]
+    fn full_setup_does_not_install_extra_php_or_python_majors() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(root.path().to_path_buf());
+        paths.ensure().unwrap();
+        let cfg = AppConfig::default();
+        write_file(&paths.nginx_exe(), b"nginx");
+        write_file(&paths.php_cgi(&cfg.php_version), b"php");
+        write_file(&paths.mysqld(), b"mysqld");
+        write_file(&paths.composer(), b"composer");
+        write_file(&paths.bin.join("node").join("node.exe"), b"node");
+        write_file(&paths.bin.join("git").join("cmd").join("git.exe"), b"git");
+        write_file(&paths.python_exe(&cfg.python_version), b"python");
+        write_file(&paths.www.join("adminer").join("index.php"), b"<?php");
+        write_file(&paths.redis_server(), b"redis");
+        write_file(&paths.mailpit(), b"mailpit");
+        write_file(&paths.mkcert(), b"mkcert");
+
+        let report = run_setup(&paths, &cfg, true, None, None).unwrap();
+        let text = report.lines.join("\n");
+        assert!(text.contains(format!("php {}: ya instalado", cfg.php_version).as_str()), "{text}");
+        assert!(
+            text.contains(format!("python {}: ya instalado", cfg.python_version).as_str()),
+            "{text}"
+        );
+        for major in crate::php_version::SUPPORTED_PHP_MAJORS {
+            if *major != cfg.php_version.as_str() {
+                assert!(!text.contains(&format!("php {major}:")), "{text}");
+            }
+        }
+        for major in crate::python_version::SUPPORTED_PYTHON_MAJORS {
+            if *major != cfg.python_version.as_str() {
+                assert!(!text.contains(&format!("python {major}:")), "{text}");
+            }
+        }
+        assert!(!paths.python_exe("3.12").is_file());
+        assert!(!paths.python_exe("3.14").is_file());
     }
 
     #[test]

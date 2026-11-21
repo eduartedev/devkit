@@ -46,7 +46,7 @@ El ejecutable queda en `target\release\devkit.exe`. Añádelo al PATH o ejecúta
 
 ```text
 devkit setup
-devkit setup --full          # Redis, Mailpit, mkcert; instala más majors de PHP y Python
+devkit setup --full          # Redis, Mailpit, mkcert (PHP/Python: solo la major pedida o activa)
 devkit setup --php 8.5       # Fija un major de PHP como versión activa
 devkit setup --python 3.12   # Fija un major de Python como versión activa
 ```

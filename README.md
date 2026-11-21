@@ -46,7 +46,7 @@ The binary is `target\release\devkit.exe`. Add it to your PATH or run it from th
 
 ```text
 devkit setup
-devkit setup --full          # Redis, Mailpit, mkcert; installs extra PHP and Python majors
+devkit setup --full          # Redis, Mailpit, mkcert (PHP/Python: only the requested or active major)
 devkit setup --php 8.5       # Use a specific PHP major as the active version
 devkit setup --python 3.12   # Use a specific Python major as the active version
 ```
