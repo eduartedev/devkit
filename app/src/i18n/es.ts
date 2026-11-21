@@ -180,7 +180,7 @@ export const es = {
   sectionWindowsPath: "PATH de Windows",
   pathScopeLabel: "Herramientas en PATH",
   pathScopeDesc:
-    "Añade php, mysql, node, git y composer al PATH. «Todos los usuarios» requiere ejecutar el panel o devkit como administrador.",
+    "Añade el CLI (devkit), php, mysql, node, git y composer al PATH. «Todos los usuarios» requiere ejecutar el panel o devkit como administrador.",
   pathScopeOff: "No",
   pathScopeUser: "Solo mi usuario",
   pathScopeMachine: "Todos los usuarios",

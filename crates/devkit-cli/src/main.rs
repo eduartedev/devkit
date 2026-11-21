@@ -60,7 +60,7 @@ enum Commands {
     },
     /// Terminal con PATH de DevKit
     Terminal,
-    /// Añade PHP, Python, MariaDB, Node, Git y Composer al PATH de Windows
+    /// Añade el CLI, PHP, Python, MariaDB, Node, Git y Composer al PATH de Windows
     Path {
         /// Quita las carpetas de este DevKit del PATH (usuario y sistema)
         #[arg(long)]

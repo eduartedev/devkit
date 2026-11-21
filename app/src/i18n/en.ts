@@ -178,7 +178,7 @@ export const en: Record<MessageKey, string> = {
   sectionWindowsPath: "Windows PATH",
   pathScopeLabel: "Tools on PATH",
   pathScopeDesc:
-    "Adds php, mysql, node, git, and composer to PATH. “All users” requires running the panel or devkit as administrator.",
+    "Adds the CLI (devkit), php, mysql, node, git, and composer to PATH. “All users” requires running the panel or devkit as administrator.",
   pathScopeOff: "No",
   pathScopeUser: "My user only",
   pathScopeMachine: "All users",
