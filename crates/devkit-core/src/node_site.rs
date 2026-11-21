@@ -196,17 +196,51 @@ pub fn create_node_site(
     Ok(root)
 }
 
-fn npm_cmd(paths: &Paths) -> PathBuf {
-    paths.bin.join("node").join("npm.cmd")
+/// `npm-cli.js` del Node embebido (evita `npm.cmd` → consola parpadeante).
+pub fn npm_cli_js(paths: &Paths) -> Result<PathBuf> {
+    let candidates = [
+        paths
+            .bin
+            .join("node")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js"),
+        paths
+            .bin
+            .join("node")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm.js"),
+    ];
+    for c in &candidates {
+        if c.is_file() {
+            return Ok(c.clone());
+        }
+    }
+    Err(Error::MissingBinary {
+        path: candidates[0].clone(),
+    })
+}
+
+pub fn npm_install_argv(cli_js: &Path) -> Vec<String> {
+    vec![
+        cli_js.to_string_lossy().into_owned(),
+        "install".into(),
+        "--no-fund".into(),
+        "--no-audit".into(),
+    ]
 }
 
 fn npm_install(paths: &Paths, root: &Path, on_line: &mut impl FnMut(&str)) -> Result<()> {
-    let npm = npm_cmd(paths);
-    if !npm.is_file() {
-        return Err(Error::MissingBinary { path: npm });
+    let node = paths.node_exe();
+    if !node.is_file() {
+        return Err(Error::MissingBinary { path: node });
     }
-    let mut cmd = Command::new(&npm);
-    cmd.args(["install", "--no-fund", "--no-audit"])
+    let cli = npm_cli_js(paths)?;
+    let mut cmd = Command::new(&node);
+    cmd.args(npm_install_argv(&cli))
         .current_dir(root)
         .env("PATH", prepend_node_path(paths));
     let status = run_logged(&mut cmd, on_line)?;
@@ -349,5 +383,27 @@ mod tests {
         let text = fs::read_to_string(dir.path().join("server.js")).unwrap();
         assert!(text.contains("DEVKIT_PORT"));
         assert!(text.contains("demo"));
+    }
+
+    #[test]
+    fn npm_cli_js_and_install_argv_skip_cmd() {
+        let dir = tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let cli = paths
+            .bin
+            .join("node")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js");
+        fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        fs::write(&cli, "module.exports = {}").unwrap();
+        fs::write(paths.bin.join("node").join("npm.cmd"), "@echo off").unwrap();
+        assert_eq!(npm_cli_js(&paths).unwrap(), cli);
+        let argv = npm_install_argv(&cli);
+        assert_eq!(argv[0], cli.to_string_lossy());
+        assert_eq!(&argv[1..], ["install", "--no-fund", "--no-audit"]);
+        assert!(!argv.iter().any(|a| a.ends_with("npm.cmd")));
     }
 }
