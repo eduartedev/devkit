@@ -181,7 +181,11 @@ pub fn install_php_version(
     if force {
         let dir = paths.php_dir(major);
         if dir.exists() {
-            fs::remove_dir_all(&dir)?;
+            fs::remove_dir_all(&dir).map_err(|e| {
+                Error::msg(format!(
+                    "no se pudo reemplazar PHP {major} ({e}). Detén el servicio PHP e inténtalo de nuevo."
+                ))
+            })?;
             report.push(format!("php {major}: directorio previo eliminado"));
         }
     }
@@ -195,7 +199,11 @@ pub fn install_python_version(paths: &Paths, major: &str, force: bool) -> Result
     if force {
         let dir = paths.python_dir(major);
         if dir.exists() {
-            fs::remove_dir_all(&dir)?;
+            fs::remove_dir_all(&dir).map_err(|e| {
+                Error::msg(format!(
+                    "no se pudo reemplazar Python {major} ({e}). Detén los sitios Python e inténtalo de nuevo."
+                ))
+            })?;
             report.push(format!("python {major}: directorio previo eliminado"));
         }
     }

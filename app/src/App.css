@@ -398,6 +398,38 @@ button:disabled { opacity: 0.5; cursor: wait; }
 .modal-settings .modal-error {
   margin: 12px 22px 0;
 }
+.updates-body {
+  max-height: min(52vh, 420px);
+  overflow: auto;
+}
+.updates-row + .updates-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #1e242b;
+}
+.settings-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.modal-backdrop-job {
+  z-index: 50;
+}
+.updates-job-log {
+  margin: 0;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  padding: 12px 14px;
+  background: #0c0e10;
+  border: 1px solid var(--line);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 @media (max-width: 560px) {
   .settings-row {

@@ -349,6 +349,25 @@ fn python_major_from_id(id: &str) -> Result<String> {
     Err(Error::msg(format!("id Python inválido: {id}")))
 }
 
+/// Servicio a detener antes de reinstalar (parche sobre major activo).
+pub fn service_to_pause_for_install(
+    id: &str,
+    php_version: &str,
+    python_version: &str,
+) -> Option<&'static str> {
+    if let Ok(major) = php_major_from_id(id) {
+        if major == php_version {
+            return Some("php");
+        }
+    }
+    if let Ok(major) = python_major_from_id(id) {
+        if major == python_version {
+            return Some("python");
+        }
+    }
+    None
+}
+
 fn install_node_staging(paths: &Paths, on_line: &mut impl FnMut(&str)) -> Result<()> {
     let (ver, url, sha) = node_lts_zip()?;
     let staging = paths.bin.join(format!("node-{}", ver.trim_start_matches('v')));
@@ -443,6 +462,26 @@ mod tests {
     fn parse_ids() {
         assert_eq!(php_major_from_id("php-8.4-patch").unwrap(), "8.4");
         assert_eq!(python_major_from_id("python-3.13-major").unwrap(), "3.13");
+    }
+
+    #[test]
+    fn pause_only_active_major_on_install() {
+        assert_eq!(
+            service_to_pause_for_install("php-8.5-patch", "8.5", "3.13"),
+            Some("php")
+        );
+        assert_eq!(
+            service_to_pause_for_install("php-8.4-patch", "8.5", "3.13"),
+            None
+        );
+        assert_eq!(
+            service_to_pause_for_install("python-3.13-patch", "8.5", "3.13"),
+            Some("python")
+        );
+        assert_eq!(
+            service_to_pause_for_install("node-lts", "8.5", "3.13"),
+            None
+        );
     }
 
     #[test]

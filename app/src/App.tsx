@@ -195,6 +195,8 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("0.2.0");
   const [updates, setUpdates] = useState<UpdateCandidate[]>([]);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [updateJobOpen, setUpdateJobOpen] = useState(false);
   const [updatePendingActivate, setUpdatePendingActivate] = useState<string | null>(
     null,
   );
@@ -707,9 +709,11 @@ export default function App() {
                 disabled={!!busy}
                 onClick={() => {
                   setMoreOpen(false);
+                  setUpdateJobOpen(true);
                   runHeavy("update-check", async () => {
                     const list = await invoke<UpdateCandidate[]>("update_check");
                     setUpdates(list);
+                    setUpdatesOpen(true);
                     return list;
                   });
                 }}
@@ -831,59 +835,6 @@ export default function App() {
         </div>
       </section>
 
-      {updates.length > 0 && (
-        <div className="log" role="status">
-          <p>{t("updatesBanner", { count: updates.length })}</p>
-          <ul>
-            {updates.map((u) => (
-              <li key={u.id}>
-                {u.id}: {u.installed} → {u.available}{" "}
-                <button
-                  type="button"
-                  className="mini"
-                  disabled={!!busy}
-                  onClick={() =>
-                    runHeavy("update-install", async () => {
-                      await invoke("update_install", { id: u.id });
-                      setUpdatePendingActivate(u.id);
-                      return u.id;
-                    })
-                  }
-                >
-                  {t("updatesInstall")}
-                </button>{" "}
-                {(updatePendingActivate === u.id || u.kind === "major") && (
-                  <button
-                    type="button"
-                    className="mini"
-                    disabled={!!busy}
-                    onClick={() =>
-                      runHeavy("update-activate", async () => {
-                        const msg = await invoke<string>("update_activate", {
-                          id: u.id,
-                        });
-                        setUpdatePendingActivate(null);
-                        setUpdates((prev) => prev.filter((x) => x.id !== u.id));
-                        return msg;
-                      })
-                    }
-                  >
-                    {t("updatesActivate")}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            className="mini"
-            onClick={() => setUpdates([])}
-          >
-            {t("updatesDismiss")}
-          </button>
-        </div>
-      )}
-
       {(busy || log || stack?.warnings?.length) && (
         <pre className="log">
           {busy ? `… ${operationName(busy)}\n` : ""}
@@ -986,6 +937,145 @@ export default function App() {
                 onClick={savePorts}
               >
                 {t("saveRestart")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateJobOpen && (
+        <div
+          className="modal-backdrop modal-backdrop-job"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setUpdateJobOpen(false);
+          }}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="updates-job-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">{t("updatesJobKicker")}</p>
+              <h2 id="updates-job-title">
+                {busy ? t("updatesJobTitle") : t("updatesJobDoneTitle")}
+              </h2>
+              <p className="modal-hint">
+                {busy
+                  ? `${operationName(busy)} · ${t("updatesJobHint")}`
+                  : t("updatesJobDoneHint")}
+              </p>
+            </header>
+            <div className="settings-body updates-body">
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t("updatesJobLog")}</h3>
+                <pre className="updates-job-log" aria-live="polite">
+                  {busy && !log ? `… ${operationName(busy)}` : log || "—"}
+                </pre>
+              </section>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setUpdateJobOpen(false)}
+              >
+                {t("updatesDismiss")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updatesOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && !updateJobOpen && setUpdatesOpen(false)}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="updates-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">{t("updatesKicker")}</p>
+              <h2 id="updates-modal-title">{t("updatesTitle")}</h2>
+              <p className="modal-hint">{t("updatesHint")}</p>
+            </header>
+            <div className="settings-body updates-body">
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t("updatesSection")}</h3>
+                {updates.length === 0 ? (
+                  <p className="settings-desc">{t("updatesUpToDate")}</p>
+                ) : (
+                  updates.map((u) => (
+                    <div className="settings-row updates-row" key={u.id}>
+                      <div className="settings-copy">
+                        <span className="settings-label">{u.component}</span>
+                        <p className="settings-desc">
+                          {t("updatesFromTo", {
+                            installed: u.installed,
+                            available: u.available,
+                          })}
+                          {u.detail ? ` · ${u.detail}` : ""}
+                          {u.kind ? ` · ${u.kind}` : ""}
+                        </p>
+                      </div>
+                      <div className="settings-control settings-control-actions">
+                        <button
+                          type="button"
+                          className="mini"
+                          disabled={!!busy}
+                          onClick={() => {
+                            setUpdateJobOpen(true);
+                            runHeavy("update-install", async () => {
+                              await invoke("update_install", { id: u.id });
+                              setUpdatePendingActivate(u.id);
+                              return u.id;
+                            });
+                          }}
+                        >
+                          {t("updatesInstall")}
+                        </button>
+                        {(updatePendingActivate === u.id || u.kind === "major") && (
+                          <button
+                            type="button"
+                            className="mini go"
+                            disabled={!!busy}
+                            onClick={() => {
+                              setUpdateJobOpen(true);
+                              runHeavy("update-activate", async () => {
+                                const msg = await invoke<string>("update_activate", {
+                                  id: u.id,
+                                });
+                                setUpdatePendingActivate(null);
+                                setUpdates((prev) => prev.filter((x) => x.id !== u.id));
+                                return msg;
+                              });
+                            }}
+                          >
+                            {t("updatesActivate")}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </section>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setUpdatesOpen(false)}
+              >
+                {t("updatesDismiss")}
               </button>
             </div>
           </div>

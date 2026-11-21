@@ -305,11 +305,15 @@ async fn update_cache(state: State<'_, KitState>) -> Result<devkit_core::UpdateC
 
 #[tauri::command]
 async fn update_install(
+    app: AppHandle,
     state: State<'_, KitState>,
     id: String,
 ) -> Result<devkit_core::UpdateCandidate, String> {
     with_heavy(&state, "update-install", move |kit| {
-        kit.update_install(&id, &mut |_| {}).map_err(map_err)
+        kit.update_install(&id, &mut |line| {
+            let _ = app.emit("job-log", line);
+        })
+        .map_err(map_err)
     })
     .await
 }

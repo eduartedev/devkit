@@ -1539,11 +1539,32 @@ impl DevKit {
         id: &str,
         on_line: &mut impl FnMut(&str),
     ) -> Result<crate::update::UpdateCandidate> {
+        // Parche sobre major activo: hay que soltar el proceso o Windows niega el borrado.
+        let pause = crate::update::service_to_pause_for_install(
+            id,
+            &self.config.php_version,
+            &self.config.python_version,
+        );
+        if let Some(svc) = pause {
+            crate::process_stream::write_log_line(
+                on_line,
+                &format!("→ deteniendo {svc} para poder reemplazar archivos…"),
+            );
+            let _ = self.stop_service(svc);
+        }
         // No muta config.php_version / python_version.
-        crate::update::install_candidate(&self.paths, &self.config, id, on_line)
+        let cand = crate::update::install_candidate(&self.paths, &self.config, id, on_line)?;
+        if let Some(svc) = pause {
+            crate::process_stream::write_log_line(on_line, &format!("→ rearrancando {svc}…"));
+            let _ = self.start_service(svc, true);
+        }
+        Ok(cand)
     }
 
     pub fn update_activate(&mut self, id: &str) -> Result<String> {
+        if id == "node-lts" {
+            let _ = self.stop_service("node");
+        }
         let msg = crate::update::activate_candidate(&self.paths, &mut self.config, id)?;
         // Reinicia el servicio afectado si estaba arriba.
         if id.starts_with("php-") {
@@ -1552,6 +1573,8 @@ impl DevKit {
         } else if id.starts_with("python-") {
             let _ = self.stop_service("python");
             let _ = self.start_service("python", true);
+        } else if id == "node-lts" {
+            let _ = self.start_service("node", true);
         }
         Ok(msg)
     }
