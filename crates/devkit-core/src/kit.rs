@@ -1558,7 +1558,7 @@ impl DevKit {
 
     pub fn update_schedule(&self, enable: bool, at: &str) -> Result<String> {
         if enable {
-            crate::site_cron::schedule_update_check(at)?;
+            crate::site_cron::schedule_update_check(&self.paths, at)?;
             Ok(format!(
                 "tarea {} programada (semanal lun {})",
                 crate::site_cron::update_check_task_name(),

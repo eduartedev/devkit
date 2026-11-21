@@ -213,15 +213,15 @@ pub fn sync_site(paths: &Paths, cfg: &AppConfig, site: &str) -> Result<Vec<Strin
     let safe = parse_site_name(site)?;
     let root = site_root(paths, &safe)?;
     let man = load_manifest(&root)?;
-    let exe = devkit_exe()?;
+    let exe = resolve_devkit_cli(paths)?;
+    let helper = ensure_run_hidden_vbs(paths)?;
     let mut report = Vec::new();
     for job in &man.jobs {
         let tn = task_name(&safe, &job.id);
-        let tr = format!(
-            "\"{}\" cron run {} {}",
-            exe.display(),
-            safe,
-            job.id
+        let tr = hidden_task_tr(
+            &helper,
+            &exe,
+            &["cron", "run", safe.as_str(), job.id.as_str()],
         );
         create_or_update_task(&tn, &tr, job)?;
         report.push(format!("sync {tn}"));
@@ -411,8 +411,110 @@ fn cron_path(paths: &Paths, cfg: &AppConfig) -> String {
     parts.join(";")
 }
 
-fn devkit_exe() -> Result<PathBuf> {
-    std::env::current_exe().map_err(|e| Error::msg(format!("no se pudo resolver devkit.exe: {e}")))
+/// Localiza el CLI `devkit.exe` (no el panel Tauri).
+pub fn resolve_devkit_cli(paths: &Paths) -> Result<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if exe
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("devkit.exe"))
+        {
+            candidates.push(exe.clone());
+        }
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("devkit.exe"));
+        }
+    }
+    candidates.push(paths.root.join("devkit.exe"));
+    candidates.push(paths.bin.join("devkit.exe"));
+    candidates.push(
+        paths
+            .root
+            .join("target")
+            .join("release")
+            .join("devkit.exe"),
+    );
+    candidates.push(paths.root.join("target").join("debug").join("devkit.exe"));
+
+    for c in &candidates {
+        if c.is_file() {
+            return Ok(c.clone());
+        }
+    }
+    Err(Error::msg(
+        "no se encontró devkit.exe (raíz del kit, junto al panel o target/release|debug)",
+    ))
+}
+
+fn run_hidden_vbs_path(paths: &Paths) -> PathBuf {
+    paths.etc.join("devkit").join("run-hidden.vbs")
+}
+
+/// Script compartido: `WScript.Shell.Run ..., 0` evita consolas al disparar tareas.
+pub fn ensure_run_hidden_vbs(paths: &Paths) -> Result<PathBuf> {
+    let path = run_hidden_vbs_path(paths);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    const BODY: &str = r#"' DevKit: lanza el CLI sin ventana (Run window style 0).
+Option Explicit
+If WScript.Arguments.Count < 1 Then
+  WScript.Quit 1
+End If
+Dim shell, cmd, i
+Set shell = CreateObject("WScript.Shell")
+cmd = Quote(WScript.Arguments(0))
+For i = 1 To WScript.Arguments.Count - 1
+  cmd = cmd & " " & Quote(WScript.Arguments(i))
+Next
+shell.Run cmd, 0, True
+WScript.Quit 0
+
+Function Quote(s)
+  Quote = """" & Replace(s, """", """""") & """"
+End Function
+"#;
+    let needs_write = match fs::read_to_string(&path) {
+        Ok(existing) => existing != BODY,
+        Err(_) => true,
+    };
+    if needs_write {
+        fs::write(&path, BODY)?;
+    }
+    Ok(path)
+}
+
+/// `/TR` para schtasks: wscript (GUI) + VBS oculto + CLI.
+pub fn hidden_task_tr(helper: &Path, exe: &Path, args: &[&str]) -> String {
+    let mut parts = vec![
+        "wscript.exe".to_string(),
+        "//B".into(),
+        "//Nologo".into(),
+        quote_tr_arg(helper),
+        quote_tr_arg(exe),
+    ];
+    for a in args {
+        parts.push(quote_tr_arg_str(a));
+    }
+    parts.join(" ")
+}
+
+fn quote_tr_arg(path: &Path) -> String {
+    quote_tr_arg_str(&path.to_string_lossy())
+}
+
+fn quote_tr_arg_str(s: &str) -> String {
+    if s.is_empty() {
+        return "\"\"".into();
+    }
+    if s.chars()
+        .any(|c| c.is_whitespace() || c == '"' || c == '&' || c == '^' || c == '%')
+    {
+        format!("\"{}\"", s.replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
 }
 
 fn task_exists(name: &str) -> bool {
@@ -485,10 +587,11 @@ pub fn update_check_task_name() -> &'static str {
     r"DevKit\update-check"
 }
 
-pub fn schedule_update_check(weekly_at: &str) -> Result<()> {
+pub fn schedule_update_check(paths: &Paths, weekly_at: &str) -> Result<()> {
     parse_hhmm(weekly_at)?;
-    let exe = devkit_exe()?;
-    let tr = format!("\"{}\" update check --cache", exe.display());
+    let exe = resolve_devkit_cli(paths)?;
+    let helper = ensure_run_hidden_vbs(paths)?;
+    let tr = hidden_task_tr(&helper, &exe, &["update", "check", "--cache"]);
     let name = update_check_task_name();
     let _ = delete_task(name);
     let mut cmd = Command::new("schtasks");
@@ -588,5 +691,40 @@ mod tests {
     #[test]
     fn task_name_format() {
         assert_eq!(task_name("blog", "nightly"), r"DevKit\blog\nightly");
+    }
+
+    #[test]
+    fn resolve_cli_prefers_kit_root_devkit_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let cli = paths.root.join("devkit.exe");
+        fs::write(&cli, []).unwrap();
+        let decoy = paths.root.join("devkit-ui.exe");
+        fs::write(&decoy, []).unwrap();
+        assert_eq!(resolve_devkit_cli(&paths).unwrap(), cli);
+    }
+
+    #[test]
+    fn hidden_task_tr_uses_wscript_and_vbs() {
+        let helper = PathBuf::from(r"C:\DevKit\etc\devkit\run-hidden.vbs");
+        let exe = PathBuf::from(r"C:\DevKit\devkit.exe");
+        let tr = hidden_task_tr(&helper, &exe, &["cron", "run", "blog", "nightly"]);
+        assert!(tr.starts_with("wscript.exe //B //Nologo "));
+        assert!(tr.contains(r"C:\DevKit\etc\devkit\run-hidden.vbs"));
+        assert!(tr.contains(r"C:\DevKit\devkit.exe"));
+        assert!(tr.contains("cron run blog nightly"));
+        assert!(!tr.contains("devkit-ui"));
+    }
+
+    #[test]
+    fn ensure_run_hidden_vbs_writes_helper() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_root(dir.path().to_path_buf());
+        let path = ensure_run_hidden_vbs(&paths).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains("WScript.Shell"));
+        assert!(body.contains("shell.Run cmd, 0, True"));
+        assert_eq!(ensure_run_hidden_vbs(&paths).unwrap(), path);
     }
 }
