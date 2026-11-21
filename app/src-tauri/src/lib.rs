@@ -518,9 +518,14 @@ fn sync_launch_at_login(_app: &AppHandle, _enabled: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Solo ocultar a bandeja cuando Windows arranca el panel (`--autostart`), no al abrir a mano.
+fn should_start_hidden(start_hidden: bool, args: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    start_hidden && args.into_iter().any(|a| a.as_ref() == "--autostart")
+}
+
 fn apply_startup_on_launch(app: &AppHandle, state: &KitState) {
     let settings = AppSettings::from_config(&state.snap.lock().config);
-    if settings.start_hidden {
+    if should_start_hidden(settings.start_hidden, std::env::args()) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.hide();
         }
@@ -637,7 +642,10 @@ pub fn run() {
             {
                 use tauri_plugin_autostart::MacosLauncher;
                 app.handle()
-                    .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+                    .plugin(tauri_plugin_autostart::init(
+                        MacosLauncher::LaunchAgent,
+                        Some(vec!["--autostart"]),
+                    ))
                     .map_err(|e| e.to_string())?;
             }
 
@@ -738,4 +746,16 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running DevKit");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_start_hidden;
+
+    #[test]
+    fn start_hidden_only_with_autostart_flag() {
+        assert!(!should_start_hidden(true, ["devkit-ui"]));
+        assert!(!should_start_hidden(false, ["devkit-ui", "--autostart"]));
+        assert!(should_start_hidden(true, ["devkit-ui", "--autostart"]));
+    }
 }

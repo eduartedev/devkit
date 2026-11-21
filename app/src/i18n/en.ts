@@ -186,7 +186,7 @@ export const en: Record<MessageKey, string> = {
   launchAtLogin: "Open when Windows starts",
   launchAtLoginDesc: "Registers DevKit to launch when you sign in.",
   startHidden: "Start in tray (hidden)",
-  startHiddenDesc: "When the panel opens, only the tray icon shows until you open it from there.",
+  startHiddenDesc: "Only when Windows starts the app: stays in the tray. Opening it yourself shows the panel.",
   autoStartLabel: "Start services on launch",
   autoStartDesc: "Same as Start all or only the services you pick.",
   autoStartOff: "No",

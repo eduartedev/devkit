@@ -188,7 +188,7 @@ export const es = {
   launchAtLogin: "Abrir al iniciar Windows",
   launchAtLoginDesc: "Registra DevKit para que se abra al iniciar sesión.",
   startHidden: "Iniciar en bandeja (oculto)",
-  startHiddenDesc: "Al abrir el panel, solo verás el icono en la bandeja hasta que lo abras desde ahí.",
+  startHiddenDesc: "Solo al iniciar Windows: el panel queda en la bandeja. Si lo abres a mano, se muestra normal.",
   autoStartLabel: "Arrancar servicios al abrir",
   autoStartDesc: "Equivalente a Iniciar todo o a los servicios que elijas.",
   autoStartOff: "No",
