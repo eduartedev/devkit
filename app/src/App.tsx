@@ -943,53 +943,6 @@ export default function App() {
         </div>
       )}
 
-      {updateJobOpen && (
-        <div
-          className="modal-backdrop modal-backdrop-job"
-          role="presentation"
-          onClick={() => {
-            if (!busy) setUpdateJobOpen(false);
-          }}
-        >
-          <div
-            className="modal modal-settings"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="updates-job-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="settings-head">
-              <p className="settings-kicker">{t("updatesJobKicker")}</p>
-              <h2 id="updates-job-title">
-                {busy ? t("updatesJobTitle") : t("updatesJobDoneTitle")}
-              </h2>
-              <p className="modal-hint">
-                {busy
-                  ? `${operationName(busy)} · ${t("updatesJobHint")}`
-                  : t("updatesJobDoneHint")}
-              </p>
-            </header>
-            <div className="settings-body updates-body">
-              <section className="settings-section">
-                <h3 className="settings-section-title">{t("updatesJobLog")}</h3>
-                <pre className="updates-job-log" aria-live="polite">
-                  {busy && !log ? `… ${operationName(busy)}` : log || "—"}
-                </pre>
-              </section>
-            </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                disabled={!!busy}
-                onClick={() => setUpdateJobOpen(false)}
-              >
-                {t("updatesDismiss")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {updatesOpen && (
         <div
           className="modal-backdrop"
@@ -1074,6 +1027,53 @@ export default function App() {
                 type="button"
                 disabled={!!busy}
                 onClick={() => setUpdatesOpen(false)}
+              >
+                {t("updatesDismiss")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateJobOpen && (
+        <div
+          className="modal-backdrop modal-backdrop-job"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setUpdateJobOpen(false);
+          }}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="updates-job-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">{t("updatesJobKicker")}</p>
+              <h2 id="updates-job-title">
+                {busy ? t("updatesJobTitle") : t("updatesJobDoneTitle")}
+              </h2>
+              <p className="modal-hint">
+                {busy
+                  ? `${operationName(busy)} · ${t("updatesJobHint")}`
+                  : t("updatesJobDoneHint")}
+              </p>
+            </header>
+            <div className="settings-body updates-body">
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t("updatesJobLog")}</h3>
+                <pre className="updates-job-log" aria-live="polite">
+                  {busy && !log ? `… ${operationName(busy)}` : log || "—"}
+                </pre>
+              </section>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setUpdateJobOpen(false)}
               >
                 {t("updatesDismiss")}
               </button>

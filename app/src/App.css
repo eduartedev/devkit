@@ -413,9 +413,6 @@ button:disabled { opacity: 0.5; cursor: wait; }
   gap: 8px;
   justify-content: flex-end;
 }
-.modal-backdrop-job {
-  z-index: 50;
-}
 .updates-job-log {
   margin: 0;
   max-height: min(40vh, 320px);
@@ -467,6 +464,9 @@ button:disabled { opacity: 0.5; cursor: wait; }
   place-items: center;
   padding: 24px;
   z-index: 40;
+}
+.modal-backdrop.modal-backdrop-job {
+  z-index: 60;
 }
 .modal {
   width: min(480px, 100%);
