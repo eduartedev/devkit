@@ -3,10 +3,22 @@ use crate::paths::{AppConfig, PathEnvScope, Paths};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Carpetas de `bin/` que DevKit antepone al PATH (mismo orden que la terminal).
+/// Carpetas que DevKit antepone al PATH (CLI + `bin/`; mismo orden que la terminal).
 pub fn devkit_path_dirs(paths: &Paths, cfg: &AppConfig) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    // Raíz primero: `devkit.exe` / `devkit.cmd` sin depender del cwd.
+    if paths.root.join("devkit.exe").is_file() || paths.root.join("devkit.cmd").is_file() {
+        push_dir(&mut out, paths.root.clone());
+    }
     push_dir(&mut out, paths.php_dir(&cfg.php_version));
+    if paths.python_exe(&cfg.python_version).is_file() {
+        let py_dir = paths.python_dir(&cfg.python_version);
+        push_dir(&mut out, py_dir.clone());
+        let scripts = py_dir.join("Scripts");
+        if scripts.is_dir() {
+            push_dir(&mut out, scripts);
+        }
+    }
     if paths.node_exe().is_file() {
         push_dir(&mut out, paths.bin.join("node"));
     }
@@ -19,7 +31,9 @@ pub fn devkit_path_dirs(paths: &Paths, cfg: &AppConfig) -> Vec<String> {
             push_dir(&mut out, cmd.to_path_buf());
         }
     }
-    push_dir(&mut out, paths.bin.join("composer"));
+    if paths.composer().is_file() {
+        push_dir(&mut out, paths.bin.join("composer"));
+    }
     out
 }
 
@@ -27,23 +41,23 @@ fn push_dir(out: &mut Vec<String>, dir: PathBuf) {
     out.push(dir.to_string_lossy().into_owned());
 }
 
-/// Quita entradas bajo `{root}/bin` (cualquier instalación previa de este DevKit).
+/// Quita la raíz del kit y entradas bajo `{root}/bin`.
 pub fn strip_devkit_bin_paths(existing: &str, root: &Path) -> Vec<String> {
     existing
         .split(';')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .filter(|s| !entry_under_devkit_bin(s, root))
+        .filter(|s| !entry_is_devkit_managed(s, root))
         .map(|s| s.to_string())
         .collect()
 }
 
-fn entry_under_devkit_bin(entry: &str, root: &Path) -> bool {
+fn entry_is_devkit_managed(entry: &str, root: &Path) -> bool {
     let entry_path = PathBuf::from(entry);
     let canon = entry_path.canonicalize().unwrap_or(entry_path);
-    let bin = root.join("bin");
-    let bin_canon = bin.canonicalize().unwrap_or(bin);
-    canon.starts_with(&bin_canon)
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let bin_canon = root_canon.join("bin");
+    canon == root_canon || canon.starts_with(&bin_canon)
 }
 
 /// Antepone `prepend` sin duplicar (comparación case-insensitive en Windows).
@@ -259,14 +273,32 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn strip_removes_only_bin_under_root() {
+    fn strip_removes_root_and_bin_under_root() {
         let root = PathBuf::from(r"C:\DevKit");
         let existing = format!(
-            r"C:\Other\bin;{}\bin\php\8.3;C:\Windows\System32",
+            r"C:\Other\bin;{};{}\bin\php\8.3;C:\Windows\System32",
+            root.display(),
             root.display()
         );
         let rest = strip_devkit_bin_paths(&existing, &root);
         assert_eq!(rest, ["C:\\Other\\bin", "C:\\Windows\\System32"]);
+    }
+
+    #[test]
+    fn path_dirs_includes_root_when_cli_present() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
+        std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::write(root.join("bin/composer/composer.phar"), b"phar").unwrap();
+        let paths = Paths::from_root(root.to_path_buf());
+        let cfg = AppConfig::default();
+        let without = devkit_path_dirs(&paths, &cfg);
+        assert!(!without.iter().any(|d| Path::new(d) == root));
+
+        std::fs::write(root.join("devkit.exe"), []).unwrap();
+        let with = devkit_path_dirs(&paths, &cfg);
+        assert_eq!(Path::new(&with[0]), root);
     }
 
     #[test]
@@ -289,6 +321,7 @@ mod tests {
         std::fs::create_dir_all(root.join("bin/git/cmd")).unwrap();
         std::fs::write(root.join("bin/git/cmd/git.exe"), []).unwrap();
         std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::write(root.join("bin/composer/composer.phar"), b"phar").unwrap();
         let paths = Paths::from_root(root.to_path_buf());
         let cfg = AppConfig {
             php_version: "8.4".into(),
@@ -303,5 +336,25 @@ mod tests {
                 .map(|d| d.ends_with("composer") || d.ends_with("composer\\"))
                 .unwrap_or(false)
         );
+    }
+
+    #[test]
+    fn python_path_only_when_exe_exists() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
+        let paths = Paths::from_root(root.to_path_buf());
+        let cfg = AppConfig {
+            python_version: "3.13".into(),
+            ..AppConfig::default()
+        };
+        let without = devkit_path_dirs(&paths, &cfg);
+        assert!(!without.iter().any(|d| d.contains("python")));
+
+        std::fs::create_dir_all(root.join("bin/python/3.13/Scripts")).unwrap();
+        std::fs::write(root.join("bin/python/3.13/python.exe"), []).unwrap();
+        let with = devkit_path_dirs(&paths, &cfg);
+        assert!(with.iter().any(|d| d.ends_with(r"bin\python\3.13") || d.ends_with("bin/python/3.13")));
+        assert!(with.iter().any(|d| d.contains("Scripts")));
     }
 }

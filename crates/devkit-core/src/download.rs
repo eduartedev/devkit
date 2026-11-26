@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
@@ -281,6 +282,164 @@ pub fn node_lts_zip() -> Result<(String, String, String)> {
     Err(Error::msg(format!("no está {filename} en SHASUMS256")))
 }
 
+/// Elige el tar.gz `install_only` de CPython para un major y triple Windows.
+/// Exige sha256 (digest del asset o un asset hermano `.sha256`).
+pub fn pick_python_install_only(
+    body: &str,
+    major: &str,
+    triple: &str,
+) -> Result<(String, String, String)> {
+    let json: serde_json::Value = serde_json::from_str(body)?;
+    let assets = json
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| Error::msg("release de python-build-standalone sin assets"))?;
+
+    let prefix = format!("cpython-{major}.");
+    let needle = format!("-{triple}-install_only.tar.gz");
+    let mut chosen: Option<(String, String, Option<String>)> = None;
+    for asset in assets {
+        let name = asset.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let lower = name.to_ascii_lowercase();
+        if !lower.starts_with(&prefix.to_ascii_lowercase()) {
+            continue;
+        }
+        if !lower.ends_with(&needle.to_ascii_lowercase()) {
+            continue;
+        }
+        // Evitar install_only_stripped u otras variantes.
+        if lower.contains("install_only_stripped") || lower.contains("full") {
+            continue;
+        }
+        let url = asset
+            .get("browser_download_url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| Error::msg(format!("Python {name} sin url")))?
+            .to_string();
+        let sha = asset
+            .get("digest")
+            .and_then(|d| d.as_str())
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+            .map(|s| s.to_string());
+        chosen = Some((name.to_string(), url, sha));
+        break;
+    }
+    let (name, url, digest) = chosen.ok_or_else(|| {
+        Error::msg(format!(
+            "no hay cpython-{major}.*-{triple}-install_only.tar.gz en el release"
+        ))
+    })?;
+
+    let sha = if let Some(s) = digest {
+        s
+    } else {
+        let sha_name = format!("{name}.sha256");
+        let mut found = None;
+        for asset in assets {
+            let n = asset.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            if n.eq_ignore_ascii_case(&sha_name) || n.eq_ignore_ascii_case(&format!("{name}.sha256.txt")) {
+                let sha_url = asset
+                    .get("browser_download_url")
+                    .and_then(|u| u.as_str())
+                    .ok_or_else(|| Error::msg(format!("asset sha256 sin url: {n}")))?;
+                found = Some(sha_url.to_string());
+                break;
+            }
+        }
+        let Some(sha_url) = found else {
+            return Err(Error::msg(format!(
+                "Python {name} sin sha256 (ni digest ni asset hermano)"
+            )));
+        };
+        fetch_sha256_text(&sha_url)?
+    };
+
+    Ok((name, url, sha))
+}
+
+fn fetch_sha256_text(url: &str) -> Result<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .user_agent("DevKit/0.1")
+        .build();
+    let body = agent
+        .get(url)
+        .call()
+        .map_err(|e| Error::Http(format!("{url}: {e}")))?
+        .into_string()
+        .map_err(|e| Error::Http(e.to_string()))?;
+    let hash = body
+        .split_whitespace()
+        .next()
+        .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| Error::msg(format!("sha256 inválido en {url}")))?;
+    Ok(hash.to_ascii_lowercase())
+}
+
+pub fn python_install_only_zip(major: &str) -> Result<(String, String, String)> {
+    let triple = crate::python_version::host_python_triple().map_err(Error::msg)?;
+    let body = github_latest_body("astral-sh/python-build-standalone")?;
+    let (_name, url, sha) = pick_python_install_only(&body, major, triple)?;
+    Ok((major.to_string(), url, sha))
+}
+
+/// Igual que `python_install_only_zip`, pero el primer campo es el stamp del asset (p. ej. `3.13.2+20250205`).
+pub fn python_install_only_latest(major: &str, triple: &str) -> Result<(String, String, String)> {
+    let body = github_latest_body("astral-sh/python-build-standalone")?;
+    let (name, url, sha) = pick_python_install_only(&body, major, triple)?;
+    let stamp = name
+        .trim_start_matches("cpython-")
+        .split('-')
+        .next()
+        .unwrap_or(major)
+        .to_string();
+    Ok((stamp, url, sha))
+}
+
+/// Extrae un `.tar.gz` rechazando rutas fuera de `dest` (zip-slip).
+pub fn untar_gz_safe(archive_path: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)?;
+    let file = fs::File::open(archive_path)?;
+    let dec = GzDecoder::new(file);
+    let mut archive = tar::Archive::new(dec);
+    let dest_canon = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+    for entry in archive.entries().map_err(|e| Error::msg(e.to_string()))? {
+        let mut entry = entry.map_err(|e| Error::msg(e.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|e| Error::msg(e.to_string()))?
+            .into_owned();
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::ZipSlip {
+                name: path.to_string_lossy().into_owned(),
+            });
+        }
+        let out = dest.join(&path);
+        if !out.starts_with(dest) {
+            return Err(Error::ZipSlip {
+                name: path.to_string_lossy().into_owned(),
+            });
+        }
+        // Comprobar también tras canonicalize del padre.
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)?;
+            let parent_canon = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            if !parent_canon.starts_with(&dest_canon) && !out.starts_with(dest) {
+                return Err(Error::ZipSlip {
+                    name: path.to_string_lossy().into_owned(),
+                });
+            }
+        }
+        entry.unpack(&out).map_err(|e| Error::msg(e.to_string()))?;
+    }
+    unwrap_single_dir(dest)?;
+    Ok(())
+}
+
 pub fn composer_latest() -> Result<(String, String)> {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
@@ -349,6 +508,34 @@ mod tests {
         assert!(matches!(err, Error::ZipSlip { .. }), "{err}");
         assert!(!root.path().join("evil.txt").exists());
         assert!(!dest.join("evil.txt").exists());
+    }
+
+    #[test]
+    fn pick_python_install_only_requires_sha_and_arch() {
+        let body = r#"{
+            "assets": [
+                {"name": "cpython-3.13.2+20250205-aarch64-pc-windows-msvc-install_only.tar.gz", "browser_download_url": "https://example.test/arm.tgz", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                {"name": "cpython-3.13.2+20250205-x86_64-pc-windows-msvc-install_only_stripped.tar.gz", "browser_download_url": "https://example.test/strip.tgz", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                {"name": "cpython-3.13.2+20250205-x86_64-pc-windows-msvc-install_only.tar.gz", "browser_download_url": "https://example.test/py.tgz", "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                {"name": "cpython-3.12.8+20250205-x86_64-pc-windows-msvc-install_only.tar.gz", "browser_download_url": "https://example.test/py312.tgz", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+            ]
+        }"#;
+        let (name, url, sha) =
+            pick_python_install_only(body, "3.13", "x86_64-pc-windows-msvc").unwrap();
+        assert!(name.contains("3.13"));
+        assert!(name.contains("x86_64"));
+        assert!(!name.contains("stripped"));
+        assert_eq!(url, "https://example.test/py.tgz");
+        assert_eq!(sha, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+
+        let arm = pick_python_install_only(body, "3.13", "aarch64-pc-windows-msvc").unwrap();
+        assert!(arm.0.contains("aarch64"));
+        assert!(!arm.0.contains("x86_64"));
+
+        let no_sha = r#"{"assets":[
+            {"name":"cpython-3.13.2+20250205-x86_64-pc-windows-msvc-install_only.tar.gz","browser_download_url":"https://example.test/py.tgz"}
+        ]}"#;
+        assert!(pick_python_install_only(no_sha, "3.13", "x86_64-pc-windows-msvc").is_err());
     }
 
     #[test]

@@ -216,6 +216,12 @@ mod tests {
             php_version: "8.3".into(),
             ssl: false,
             url: String::new(),
+            kind: crate::model::SiteKind::Php,
+            python_version: None,
+            python_runtime: None,
+            python_port: None,
+            node_runtime: None,
+            node_port: None,
         }
     }
 

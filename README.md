@@ -10,8 +10,12 @@ Use it to run PHP apps and frameworks on your machine without wiring Nginx, PHP,
 
 - **HTTP/HTTPS** via Nginx (default HTTP port `8080`, HTTPS `8443` after SSL setup)
 - **Multiple PHP versions** (8.3, 8.4, 8.5) under `bin/php/`; switch with `devkit php use`
+- **Python** (3.12, 3.13, 3.14) under `bin/python/`; Flask/FastAPI/Django sites with venv; `devkit python use`
+- **Node** (LTS) under `bin/node/`; Node/Express sites proxied by Nginx
+- **Cron** per site via `www/<site>/.devkit-cron.toml` → Windows Task Scheduler (`devkit cron sync`)
+- **Updates** for PHP/Python/Node patches and majors (`devkit update check` → install → activate)
 - **MariaDB** for local databases; credentials stored under `etc/devkit/secrets/`
-- **Optional** Redis, Mailpit, mkcert, Node, and Composer with `devkit setup --full`
+- **Optional** Redis, Mailpit, and mkcert with `devkit setup --full` (Node and Composer ship with the basic setup)
 - **Sites** as folders in `www/` → `https://name.<tld>` style hostnames (default TLD `test`)
 - **Security-focused PHP installs**: downloads must meet current **php2shell** patch levels; `php.ini` includes recommended mitigations
 
@@ -42,8 +46,9 @@ The binary is `target\release\devkit.exe`. Add it to your PATH or run it from th
 
 ```text
 devkit setup
-devkit setup --full          # Redis, Mailpit, mkcert; installs PHP 8.3, 8.4, and 8.5
-devkit setup --php 8.5       # Use a specific major as the active version
+devkit setup --full          # Redis, Mailpit, mkcert (PHP/Python: only the requested or active major)
+devkit setup --php 8.5       # Use a specific PHP major as the active version
+devkit setup --python 3.12   # Use a specific Python major as the active version
 ```
 
 ### 3. Start and check
@@ -70,12 +75,23 @@ In **Settings → General → Startup** you can enable: launch with Windows, sta
 ## CLI reference
 
 ```text
-devkit setup [--full] [--php 8.4|8.5]
+devkit setup [--full] [--php 8.4|8.5] [--python 3.12|3.13|3.14]
 devkit start | stop | status | ports | reload
 devkit php list | devkit php use 8.4
+devkit python list | devkit python use 3.13
 devkit create laravel my-shop
 devkit create wordpress my-blog
 devkit create blank my-api
+devkit create python my-script
+devkit create flask my-api
+devkit create fastapi my-svc
+devkit create django my-web
+devkit create node my-api
+devkit create express my-svc
+devkit cron list | sync | disable [site]
+devkit cron run <site> <job>
+devkit update check | install <id> | activate <id>
+devkit update schedule [--off] [--at 10:00]
 devkit ssl
 devkit pack
 devkit terminal

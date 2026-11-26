@@ -1,11 +1,12 @@
 use devkit_core::{
     build_mcp_release, mcp_exe_info, terminal, watch, AppConfig, AppSettings, AutoStartMode,
-    DbCredentials, DevKit, McpExeInfo, Paths, PhpExtensionInfo, PortsSettings, StackStatus,
+    DbCredentials, DevKit, McpExeInfo, PathEnvScope, Paths, PhpExtensionInfo, PortsSettings,
+    StackStatus,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -242,9 +243,11 @@ async fn setup_stack(
     state: State<'_, KitState>,
     full: bool,
     php: Option<String>,
+    python: Option<String>,
 ) -> Result<Vec<String>, String> {
     with_heavy(&state, "setup", move |kit| {
-        kit.setup(full, php.as_deref()).map_err(map_err)
+        kit.setup(full, php.as_deref(), python.as_deref())
+            .map_err(map_err)
     })
     .await
 }
@@ -266,6 +269,96 @@ async fn use_php(state: State<'_, KitState>, version: String) -> Result<StackSta
     with_heavy(&state, "php", move |kit| {
         kit.use_php(&version).map_err(map_err)?;
         kit.status_light().map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn python_versions(state: State<'_, KitState>) -> Result<Vec<String>, String> {
+    with_kit(&state, |kit| {
+        let mut v = kit.python_versions().map_err(map_err)?;
+        if !v.contains(&kit.config.python_version) {
+            v.push(kit.config.python_version.clone());
+        }
+        Ok(v)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn use_python(state: State<'_, KitState>, version: String) -> Result<StackStatus, String> {
+    with_heavy(&state, "python", move |kit| {
+        kit.use_python(&version).map_err(map_err)?;
+        kit.status_light().map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_check(state: State<'_, KitState>) -> Result<Vec<devkit_core::UpdateCandidate>, String> {
+    with_heavy(&state, "update-check", |kit| kit.update_check().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn update_cache(state: State<'_, KitState>) -> Result<devkit_core::UpdateCache, String> {
+    with_kit(&state, |kit| kit.update_cache().map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn update_install(
+    app: AppHandle,
+    state: State<'_, KitState>,
+    id: String,
+) -> Result<devkit_core::UpdateCandidate, String> {
+    with_heavy(&state, "update-install", move |kit| {
+        kit.update_install(&id, &mut |line| {
+            let _ = app.emit("job-log", line);
+        })
+        .map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_activate(state: State<'_, KitState>, id: String) -> Result<String, String> {
+    with_heavy(&state, "update-activate", move |kit| {
+        kit.update_activate(&id).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_schedule(
+    state: State<'_, KitState>,
+    enable: bool,
+    at: String,
+) -> Result<String, String> {
+    with_heavy(&state, "update-schedule", move |kit| {
+        kit.update_schedule(enable, &at).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_schedule_status(state: State<'_, KitState>) -> Result<bool, String> {
+    with_kit(&state, |kit| Ok(kit.update_schedule_status())).await
+}
+
+#[tauri::command]
+async fn cron_list(
+    state: State<'_, KitState>,
+    site: Option<String>,
+) -> Result<Vec<devkit_core::CronJobInfo>, String> {
+    with_kit(&state, move |kit| kit.cron_list(site.as_deref()).map_err(map_err)).await
+}
+
+#[tauri::command]
+async fn cron_sync(
+    state: State<'_, KitState>,
+    site: Option<String>,
+) -> Result<Vec<String>, String> {
+    with_heavy(&state, "cron-sync", move |kit| {
+        kit.cron_sync(site.as_deref()).map_err(map_err)
     })
     .await
 }
@@ -343,6 +436,17 @@ async fn update_app_settings(
 }
 
 #[tauri::command]
+async fn apply_path_scope(
+    state: State<'_, KitState>,
+    scope: PathEnvScope,
+) -> Result<String, String> {
+    with_heavy(&state, "path-apply", move |kit| {
+        kit.path_apply_scope(scope).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn regenerate_vhosts(state: State<'_, KitState>) -> Result<String, String> {
     with_heavy(&state, "vhosts", |kit| {
         kit.regenerate_vhosts().map_err(map_err)
@@ -407,6 +511,7 @@ fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -429,9 +534,14 @@ fn sync_launch_at_login(_app: &AppHandle, _enabled: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Solo ocultar a bandeja cuando Windows arranca el panel (`--autostart`), no al abrir a mano.
+fn should_start_hidden(start_hidden: bool, args: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    start_hidden && args.into_iter().any(|a| a.as_ref() == "--autostart")
+}
+
 fn apply_startup_on_launch(app: &AppHandle, state: &KitState) {
     let settings = AppSettings::from_config(&state.snap.lock().config);
-    if settings.start_hidden {
+    if should_start_hidden(settings.start_hidden, std::env::args()) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.hide();
         }
@@ -508,6 +618,7 @@ pub fn run() {
             update_db_credentials,
             get_app_settings,
             update_app_settings,
+            apply_path_scope,
             regenerate_vhosts,
             open_site_vhost,
             list_php_extensions,
@@ -529,6 +640,16 @@ pub fn run() {
             setup_stack,
             php_versions,
             use_php,
+            python_versions,
+            use_python,
+            update_check,
+            update_cache,
+            update_install,
+            update_activate,
+            update_schedule,
+            update_schedule_status,
+            cron_list,
+            cron_sync,
             enable_ssl,
             pack_portable,
             open_in_browser
@@ -538,7 +659,10 @@ pub fn run() {
             {
                 use tauri_plugin_autostart::MacosLauncher;
                 app.handle()
-                    .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+                    .plugin(tauri_plugin_autostart::init(
+                        MacosLauncher::LaunchAgent,
+                        Some(vec!["--autostart"]),
+                    ))
                     .map_err(|e| e.to_string())?;
             }
 
@@ -558,8 +682,17 @@ pub fn run() {
             let handle = app.handle().clone();
             TrayIconBuilder::new()
                 .menu(&menu)
-                .tooltip("DevKit")
+                .tooltip(format!("DevKit {}", env!("CARGO_PKG_VERSION")))
                 .icon(app.default_window_icon().unwrap().clone())
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        show_main(tray.app_handle());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "start" => {
@@ -630,4 +763,16 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running DevKit");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_start_hidden;
+
+    #[test]
+    fn start_hidden_only_with_autostart_flag() {
+        assert!(!should_start_hidden(true, ["devkit-ui"]));
+        assert!(!should_start_hidden(false, ["devkit-ui", "--autostart"]));
+        assert!(should_start_hidden(true, ["devkit-ui", "--autostart"]));
+    }
 }

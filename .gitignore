@@ -16,7 +16,7 @@
 /bin/mkcert/
 /bin/node/
 /bin/git/
-/bin/composer/*.phar
+/bin/composer/
 /data/**
 !/data/.gitkeep
 /logs/**
@@ -29,6 +29,8 @@
 /etc/redis/redis.conf
 /etc/devkit/secrets/
 /etc/devkit/config.toml
+/etc/devkit/run-hidden.vbs
+/etc/devkit/update-cache.toml
 /etc/ssl/*.pem
 /etc/ssl/*.key
 /www/**
@@ -40,3 +42,4 @@ Thumbs.db
 !/crates/**
 
 /dist/
+/bin/python/

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -24,6 +25,12 @@ type Site = {
   php_version: string;
   ssl: boolean;
   url: string;
+  kind?: "php" | "python" | "node";
+  python_version?: string | null;
+  python_runtime?: string | null;
+  python_port?: number | null;
+  node_runtime?: string | null;
+  node_port?: number | null;
 };
 
 type PortOwner =
@@ -77,16 +84,35 @@ type AppSettings = {
   path_scope: PathEnvScope;
 };
 
-const AUTO_START_SERVICE_IDS = ["mariadb", "php", "nginx", "redis", "mailpit"] as const;
+const AUTO_START_SERVICE_IDS = [
+  "mariadb",
+  "php",
+  "nginx",
+  "python",
+  "node",
+  "redis",
+  "mailpit",
+] as const;
 
 type Stack = {
   root: string;
   php_version: string;
+  python_version?: string;
+  node_ready?: boolean;
   services: Service[];
   sites: Site[];
   dns: string;
   warnings: string[];
   port_checks?: PortCheck[];
+};
+
+type UpdateCandidate = {
+  id: string;
+  component: string;
+  kind: string;
+  installed: string;
+  available: string;
+  detail: string;
 };
 
 const PORT_FIELDS: { key: keyof PortsSettings; label: MessageKey }[] = [
@@ -145,6 +171,7 @@ export default function App() {
   const [kind, setKind] = useState("blank");
   const [name, setName] = useState("");
   const [php, setPhp] = useState<string[]>([]);
+  const [python, setPython] = useState<string[]>([]);
   const [portsOpen, setPortsOpen] = useState(false);
   const [portsDraft, setPortsDraft] = useState<PortsSettings | null>(null);
   const [portsError, setPortsError] = useState("");
@@ -160,9 +187,19 @@ export default function App() {
   const [mcpOpen, setMcpOpen] = useState(false);
   const [mcpInfo, setMcpInfo] = useState<McpExeInfo | null>(null);
   const [appOpen, setAppOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"sites" | "php" | "general">("sites");
+  const [settingsTab, setSettingsTab] = useState<"sites" | "runtimes" | "general">(
+    "sites",
+  );
   const [appDraft, setAppDraft] = useState<AppSettings | null>(null);
   const [appError, setAppError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("0.2.0");
+  const [updates, setUpdates] = useState<UpdateCandidate[]>([]);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [updateJobOpen, setUpdateJobOpen] = useState(false);
+  const [updatePendingActivate, setUpdatePendingActivate] = useState<string | null>(
+    null,
+  );
   const moreRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -197,6 +234,11 @@ export default function App() {
     // Poll ligero cada 5s; status usa caché si el kit está ocupado.
     const id = setInterval(refresh, 5000);
     invoke<string[]>("php_versions").then(setPhp).catch(() => {});
+    invoke<string[]>("python_versions").then(setPython).catch(() => {});
+    getVersion().then(setAppVersion).catch(() => {});
+    invoke<{ candidates: UpdateCandidate[] }>("update_cache")
+      .then((c) => setUpdates(c.candidates ?? []))
+      .catch(() => {});
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -390,21 +432,31 @@ export default function App() {
         </div>
       </header>
 
-      <section className="strip">
+      <section className="strip" aria-label="status">
         <div>
-          <span>HTTP</span>
+          <span>{t("stripHttp")}</span>
           <strong>:{httpPort}</strong>
         </div>
         <div>
-          <span>PHP</span>
+          <span>{t("stripPhp")}</span>
           <strong>{stack?.php_version ?? "—"}</strong>
         </div>
         <div>
-          <span>DNS</span>
+          <span>{t("stripPython")}</span>
+          <strong>{stack?.python_version ?? "—"}</strong>
+        </div>
+        <div>
+          <span>{t("stripNode")}</span>
+          <strong>
+            {stack?.node_ready ? t("nodeReady") : t("nodeMissing")}
+          </strong>
+        </div>
+        <div>
+          <span>{t("stripDns")}</span>
           <strong>{stack?.dns ?? "—"}</strong>
         </div>
         <div className="path" title={stack?.root}>
-          <span>ROOT</span>
+          <span>{t("stripRoot")}</span>
           <strong>{stack?.root ?? "C:\\DevKit"}</strong>
         </div>
       </section>
@@ -412,14 +464,18 @@ export default function App() {
       <main className="grid">
         <section className="panel">
           <h2>{t("services")}</h2>
+          <p className="panel-lead">{t("servicesHint")}</p>
           <ul className="services">
             {stack?.services.map((s) => (
-              <li key={s.id}>
-                <i className={s.status} />
+              <li key={s.id} title={`${s.bind}:${s.port} · ${s.detail}`}>
+                <i className={s.status} aria-hidden />
                 <div>
                   <b>{s.display_name}</b>
                   <small>
-                    {s.bind}:{s.port} · {s.detail}
+                    <span className="svc-endpoint">
+                      {s.bind}:{s.port}
+                    </span>
+                    <span className="svc-detail">{s.detail}</span>
                   </small>
                 </div>
                 {s.status === "running" ? (
@@ -451,7 +507,10 @@ export default function App() {
 
         <section className="panel">
           <div className="panel-head">
-            <h2>{t("sites")}</h2>
+            <div>
+              <h2>{t("sites")}</h2>
+              <p className="panel-lead">{t("sitesHint")}</p>
+            </div>
             <button
               type="button"
               disabled={!!busy}
@@ -488,12 +547,7 @@ export default function App() {
                         className="mini danger"
                         disabled={!!busy}
                         title={t("deleteSiteTitle")}
-                        onClick={() => {
-                          if (!confirm(t("deleteSiteConfirm", { name: s.name }))) return;
-                          runHeavy("delete", () =>
-                            invoke("delete_site", { name: s.name }),
-                          );
-                        }}
+                        onClick={() => setDeleteTarget(s.name)}
                       >
                         {t("deleteSite")}
                       </button>
@@ -515,10 +569,17 @@ export default function App() {
               );
             }}
           >
-            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <p className="create-hint">{t("createHint")}</p>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label={t("createHint")}>
               <option value="blank">{t("kindBlank")}</option>
               <option value="laravel">{t("kindLaravel")}</option>
               <option value="wordpress">{t("kindWordpress")}</option>
+              <option value="python">{t("kindPython")}</option>
+              <option value="flask">{t("kindFlask")}</option>
+              <option value="fastapi">{t("kindFastapi")}</option>
+              <option value="django">{t("kindDjango")}</option>
+              <option value="node">{t("kindNode")}</option>
+              <option value="express">{t("kindExpress")}</option>
             </select>
             <input
               placeholder={t("sitePlaceholder")}
@@ -532,7 +593,10 @@ export default function App() {
         </section>
         <section className="panel">
           <div className="panel-head">
-            <h2>{t("ports")}</h2>
+            <div>
+              <h2>{t("ports")}</h2>
+              <p className="panel-lead">{t("portsPanelHint")}</p>
+            </div>
             <button type="button" disabled={!!busy} onClick={openPortsModal}>
               {t("edit")}
             </button>
@@ -578,6 +642,7 @@ export default function App() {
         </button>
         <button
           type="button"
+          title={t("adminerTitle")}
           onClick={() =>
             runLight(async () => {
               const url = await invoke<string>("adminer_url");
@@ -607,26 +672,33 @@ export default function App() {
             className={moreOpen ? "tools-more-btn open" : "tools-more-btn"}
             aria-expanded={moreOpen}
             aria-haspopup="menu"
+            title={t("moreTitle")}
             onClick={() => setMoreOpen((o) => !o)}
           >
             {t("more")}
           </button>
           {moreOpen && (
             <div className="tools-dropdown" role="menu">
+              <p className="tools-group">
+                {t("moreVersion", { version: appVersion })}
+              </p>
               <p className="tools-group">{t("groupDevkit")}</p>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipSettings")}
                 onClick={() => {
                   setMoreOpen(false);
                   openAppModal();
                 }}
               >
-                {t("settings")}
+                <span className="menu-item-label">{t("settings")}</span>
+                <span className="menu-item-desc">{t("tipSettings")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipMcp")}
                 onClick={() => {
                   setMoreOpen(false);
                   setMcpOpen(true);
@@ -635,58 +707,89 @@ export default function App() {
                     .catch(() => setMcpInfo(null));
                 }}
               >
-                {t("mcp")}
+                <span className="menu-item-label">{t("mcp")}</span>
+                <span className="menu-item-desc">{t("tipMcp")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                title={t("tipSetupFull")}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("setup", () => invoke("setup_stack", { full: true }));
+                }}
+              >
+                <span className="menu-item-label">{t("setupFull")}</span>
+                <span className="menu-item-desc">{t("tipSetupFull")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                title={t("tipCheckUpdates")}
+                onClick={() => {
+                  setMoreOpen(false);
+                  setUpdateJobOpen(true);
+                  runHeavy("update-check", async () => {
+                    const list = await invoke<UpdateCandidate[]>("update_check");
+                    setUpdates(list);
+                    setUpdatesOpen(true);
+                    return list;
+                  });
+                }}
+              >
+                <span className="menu-item-label">{t("checkUpdates")}</span>
+                <span className="menu-item-desc">{t("tipCheckUpdates")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                title={t("tipSyncCron")}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("cron-sync", () => invoke("cron_sync", { site: null }));
+                }}
+              >
+                <span className="menu-item-label">{t("syncCron")}</span>
+                <span className="menu-item-desc">{t("tipSyncCron")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busy}
+                title={t("tipScheduleUpdates")}
+                onClick={() => {
+                  setMoreOpen(false);
+                  runHeavy("update-schedule", () =>
+                    invoke("update_schedule", { enable: true, at: "10:00" }),
+                  );
+                }}
+              >
+                <span className="menu-item-label">{t("scheduleUpdates")}</span>
+                <span className="menu-item-desc">{t("tipScheduleUpdates")}</span>
               </button>
 
               <p className="tools-group">{t("groupDb")}</p>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipCredentials")}
                 onClick={() => {
                   setMoreOpen(false);
                   openDbModal();
                 }}
               >
-                {t("credentials")}
-              </button>
-
-              <p className="tools-group">{t("groupPhp")}</p>
-              {php.length > 0 ? (
-                <select
-                  className="tools-php"
-                  value={stack?.php_version}
-                  disabled={!!busy}
-                  aria-label={t("phpVersion")}
-                  onChange={(e) => {
-                    setMoreOpen(false);
-                    runHeavy("php", () => invoke("use_php", { version: e.target.value }));
-                  }}
-                >
-                  {php.map((v) => (
-                    <option key={v} value={v}>
-                      PHP {v}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="tools-empty">{t("noPhp")}</p>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMoreOpen(false);
-                  openExtModal();
-                }}
-              >
-                {t("extensions")}
+                <span className="menu-item-label">{t("credentials")}</span>
+                <span className="menu-item-desc">{t("tipCredentials")}</span>
               </button>
 
               <p className="tools-group">{t("groupNet")}</p>
               <button
                 type="button"
                 role="menuitem"
-                title={`Abrir http://127.0.0.1:${httpPort}/`}
+                title={t("tipOpenLocal")}
                 onClick={() => {
                   setMoreOpen(false);
                   runLight(async () => {
@@ -696,40 +799,48 @@ export default function App() {
                   });
                 }}
               >
-                {t("openLocal", { port: httpPort })}
+                <span className="menu-item-label">
+                  {t("openLocal", { port: httpPort })}
+                </span>
+                <span className="menu-item-desc">{t("tipOpenLocal")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipCheckPorts")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("ports", () => invoke("check_ports"));
                 }}
               >
-                {t("checkPorts")}
+                <span className="menu-item-label">{t("checkPorts")}</span>
+                <span className="menu-item-desc">{t("tipCheckPorts")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipEditPorts")}
                 onClick={() => {
                   setMoreOpen(false);
                   openPortsModal();
                 }}
               >
-                {t("editPorts")}
+                <span className="menu-item-label">{t("editPorts")}</span>
+                <span className="menu-item-desc">{t("tipEditPorts")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
-                title={t("updateHostsTitle")}
+                title={t("tipUpdateHosts")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("hosts", () => invoke("ensure_hosts"));
                 }}
               >
-                {t("updateHosts")}
+                <span className="menu-item-label">{t("updateHosts")}</span>
+                <span className="menu-item-desc">{t("tipUpdateHosts")}</span>
               </button>
 
               <p className="tools-group">{t("groupSystem")}</p>
@@ -737,34 +848,27 @@ export default function App() {
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipSsl")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("ssl", () => invoke("enable_ssl"));
                 }}
               >
-                {t("ssl")}
+                <span className="menu-item-label">{t("ssl")}</span>
+                <span className="menu-item-desc">{t("tipSsl")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipZip")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("pack", () => invoke("pack_portable"));
                 }}
               >
-                {t("zip")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!!busy}
-                onClick={() => {
-                  setMoreOpen(false);
-                  runHeavy("setup", () => invoke("setup_stack", { full: true }));
-                }}
-              >
-                {t("setupFull")}
+                <span className="menu-item-label">{t("zip")}</span>
+                <span className="menu-item-desc">{t("tipZip")}</span>
               </button>
             </div>
           )}
@@ -777,6 +881,48 @@ export default function App() {
           {stack?.warnings?.join("\n")}
           {log}
         </pre>
+      )}
+
+      {deleteTarget && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setDeleteTarget(null)}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-site-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-site-title">
+              {t("deleteSiteModalTitle", { name: deleteTarget })}
+            </h2>
+            <p className="modal-hint">{t("deleteSiteConfirm", { name: deleteTarget })}</p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setDeleteTarget(null)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                type="button"
+                className="stop"
+                disabled={!!busy}
+                onClick={() => {
+                  const name = deleteTarget;
+                  setDeleteTarget(null);
+                  runHeavy("delete", () => invoke("delete_site", { name }));
+                }}
+              >
+                {t("deleteSite")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {portsOpen && portsDraft && (
@@ -837,6 +983,145 @@ export default function App() {
         </div>
       )}
 
+      {updatesOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && !updateJobOpen && setUpdatesOpen(false)}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="updates-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">{t("updatesKicker")}</p>
+              <h2 id="updates-modal-title">{t("updatesTitle")}</h2>
+              <p className="modal-hint">{t("updatesHint")}</p>
+            </header>
+            <div className="settings-body updates-body">
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t("updatesSection")}</h3>
+                {updates.length === 0 ? (
+                  <p className="settings-desc">{t("updatesUpToDate")}</p>
+                ) : (
+                  updates.map((u) => (
+                    <div className="settings-row updates-row" key={u.id}>
+                      <div className="settings-copy">
+                        <span className="settings-label">{u.component}</span>
+                        <p className="settings-desc">
+                          {t("updatesFromTo", {
+                            installed: u.installed,
+                            available: u.available,
+                          })}
+                          {u.detail ? ` · ${u.detail}` : ""}
+                          {u.kind ? ` · ${u.kind}` : ""}
+                        </p>
+                      </div>
+                      <div className="settings-control settings-control-actions">
+                        <button
+                          type="button"
+                          className="mini"
+                          disabled={!!busy}
+                          onClick={() => {
+                            setUpdateJobOpen(true);
+                            runHeavy("update-install", async () => {
+                              await invoke("update_install", { id: u.id });
+                              setUpdatePendingActivate(u.id);
+                              return u.id;
+                            });
+                          }}
+                        >
+                          {t("updatesInstall")}
+                        </button>
+                        {(updatePendingActivate === u.id || u.kind === "major") && (
+                          <button
+                            type="button"
+                            className="mini go"
+                            disabled={!!busy}
+                            onClick={() => {
+                              setUpdateJobOpen(true);
+                              runHeavy("update-activate", async () => {
+                                const msg = await invoke<string>("update_activate", {
+                                  id: u.id,
+                                });
+                                setUpdatePendingActivate(null);
+                                setUpdates((prev) => prev.filter((x) => x.id !== u.id));
+                                return msg;
+                              });
+                            }}
+                          >
+                            {t("updatesActivate")}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </section>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setUpdatesOpen(false)}
+              >
+                {t("updatesDismiss")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateJobOpen && (
+        <div
+          className="modal-backdrop modal-backdrop-job"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setUpdateJobOpen(false);
+          }}
+        >
+          <div
+            className="modal modal-settings"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="updates-job-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="settings-head">
+              <p className="settings-kicker">{t("updatesJobKicker")}</p>
+              <h2 id="updates-job-title">
+                {busy ? t("updatesJobTitle") : t("updatesJobDoneTitle")}
+              </h2>
+              <p className="modal-hint">
+                {busy
+                  ? `${operationName(busy)} · ${t("updatesJobHint")}`
+                  : t("updatesJobDoneHint")}
+              </p>
+            </header>
+            <div className="settings-body updates-body">
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t("updatesJobLog")}</h3>
+                <pre className="updates-job-log" aria-live="polite">
+                  {busy && !log ? `… ${operationName(busy)}` : log || "—"}
+                </pre>
+              </section>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => setUpdateJobOpen(false)}
+              >
+                {t("updatesDismiss")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {appOpen && appDraft && (
         <div
           className="modal-backdrop"
@@ -871,13 +1156,13 @@ export default function App() {
               <button
                 type="button"
                 role="tab"
-                id="settings-tab-php"
-                aria-selected={settingsTab === "php"}
-                aria-controls="settings-panel-php"
-                className={settingsTab === "php" ? "on" : undefined}
-                onClick={() => setSettingsTab("php")}
+                id="settings-tab-runtimes"
+                aria-selected={settingsTab === "runtimes"}
+                aria-controls="settings-panel-runtimes"
+                className={settingsTab === "runtimes" ? "on" : undefined}
+                onClick={() => setSettingsTab("runtimes")}
               >
-                {t("tabPhp")}
+                {t("tabRuntimes")}
               </button>
               <button
                 type="button"
@@ -974,11 +1259,89 @@ export default function App() {
 
             <div
               role="tabpanel"
-              id="settings-panel-php"
-              aria-labelledby="settings-tab-php"
-              className={settingsTab === "php" ? "is-active" : undefined}
-              inert={settingsTab === "php" ? undefined : true}
+              id="settings-panel-runtimes"
+              aria-labelledby="settings-tab-runtimes"
+              className={settingsTab === "runtimes" ? "is-active" : undefined}
+              inert={settingsTab === "runtimes" ? undefined : true}
             >
+            <section className="settings-section">
+              <h3 className="settings-section-title">{t("sectionRuntimes")}</h3>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("phpVersion")}</span>
+                  <p className="settings-desc">{t("groupPhp")}</p>
+                </div>
+                <div className="settings-control">
+                  {php.length > 0 ? (
+                    <select
+                      className="settings-lang"
+                      value={stack?.php_version}
+                      disabled={!!busy}
+                      aria-label={t("phpVersion")}
+                      onChange={(e) => {
+                        runHeavy("php", () =>
+                          invoke("use_php", { version: e.target.value }),
+                        );
+                      }}
+                    >
+                      {php.map((v) => (
+                        <option key={v} value={v}>
+                          PHP {v}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="tools-empty">{t("noPhp")}</p>
+                  )}
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("pythonVersion")}</span>
+                  <p className="settings-desc">{t("groupPython")}</p>
+                </div>
+                <div className="settings-control">
+                  {python.length > 0 ? (
+                    <select
+                      className="settings-lang"
+                      value={stack?.python_version}
+                      disabled={!!busy}
+                      aria-label={t("pythonVersion")}
+                      onChange={(e) => {
+                        runHeavy("python", () =>
+                          invoke("use_python", { version: e.target.value }),
+                        );
+                      }}
+                    >
+                      {python.map((v) => (
+                        <option key={v} value={v}>
+                          Python {v}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="tools-empty">{t("noPython")}</p>
+                  )}
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-copy">
+                  <span className="settings-label">{t("extensions")}</span>
+                  <p className="settings-desc">{t("extTitle")}</p>
+                </div>
+                <div className="settings-control">
+                  <button
+                    type="button"
+                    disabled={!!busy}
+                    onClick={() => {
+                      void openExtModal();
+                    }}
+                  >
+                    {t("extensions")}
+                  </button>
+                </div>
+              </div>
+            </section>
             <section className="settings-section">
               <h3 className="settings-section-title">{t("sectionPhp")}</h3>
               <div className="settings-row">
@@ -1032,7 +1395,7 @@ export default function App() {
                   <span className="settings-label">{t("pathScopeLabel")}</span>
                   <p className="settings-desc">{t("pathScopeDesc")}</p>
                 </div>
-                <div className="settings-control">
+                <div className="settings-control settings-control-col">
                   <select
                     className="settings-lang"
                     value={appDraft.path_scope}
@@ -1049,6 +1412,21 @@ export default function App() {
                     <option value="user">{t("pathScopeUser")}</option>
                     <option value="machine">{t("pathScopeMachine")}</option>
                   </select>
+                  <button
+                    type="button"
+                    className="mini"
+                    disabled={!!busy}
+                    title={t("pathApplyTitle")}
+                    onClick={() =>
+                      runHeavy("path-apply", () =>
+                        invoke<string>("apply_path_scope", {
+                          scope: appDraft.path_scope,
+                        }),
+                      )
+                    }
+                  >
+                    {t("pathApply")}
+                  </button>
                 </div>
               </div>
             </section>
@@ -1133,7 +1511,12 @@ export default function App() {
                   <ul className="auto-start-services">
                     {AUTO_START_SERVICE_IDS.map((id) => {
                       const svc = stack?.services.find((s) => s.id === id);
-                      const label = svc?.display_name ?? id;
+                      const label =
+                        id === "python"
+                          ? t("svcPython")
+                          : id === "node"
+                            ? t("svcNode")
+                            : (svc?.display_name ?? id);
                       const on = appDraft.auto_start_services.includes(id);
                       return (
                         <li key={id}>
