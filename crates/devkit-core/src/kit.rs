@@ -1413,6 +1413,34 @@ impl DevKit {
         Ok(())
     }
 
+    /// Aplica (o quita) el PATH de Windows con el scope elegido, sin tocar el resto de ajustes.
+    pub fn path_apply_scope(
+        &mut self,
+        scope: crate::paths::PathEnvScope,
+    ) -> Result<String> {
+        use crate::paths::PathEnvScope;
+        match scope {
+            PathEnvScope::Off => {
+                self.path_remove()?;
+                Ok("PATH: entradas de DevKit quitadas. Abre una terminal nueva para ver el cambio.".into())
+            }
+            PathEnvScope::User => {
+                let dirs = self.path_apply(false)?;
+                Ok(format!(
+                    "PATH actualizado (tu usuario). Abre una terminal nueva.\n{}",
+                    dirs.iter().map(|d| format!("  {d}")).collect::<Vec<_>>().join("\n")
+                ))
+            }
+            PathEnvScope::Machine => {
+                let dirs = self.path_apply(true)?;
+                Ok(format!(
+                    "PATH actualizado (todos los usuarios). Abre una terminal nueva.\n{}",
+                    dirs.iter().map(|d| format!("  {d}")).collect::<Vec<_>>().join("\n")
+                ))
+            }
+        }
+    }
+
     pub fn ports_config(&self) -> crate::ports::PortsSettings {
         crate::ports::PortsSettings::from_config(&self.config)
     }

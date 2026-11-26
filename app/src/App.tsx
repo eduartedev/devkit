@@ -432,31 +432,31 @@ export default function App() {
         </div>
       </header>
 
-      <section className="strip">
+      <section className="strip" aria-label="status">
         <div>
-          <span>HTTP</span>
+          <span>{t("stripHttp")}</span>
           <strong>:{httpPort}</strong>
         </div>
         <div>
-          <span>PHP</span>
+          <span>{t("stripPhp")}</span>
           <strong>{stack?.php_version ?? "—"}</strong>
         </div>
         <div>
-          <span>Python</span>
+          <span>{t("stripPython")}</span>
           <strong>{stack?.python_version ?? "—"}</strong>
         </div>
         <div>
-          <span>Node</span>
+          <span>{t("stripNode")}</span>
           <strong>
             {stack?.node_ready ? t("nodeReady") : t("nodeMissing")}
           </strong>
         </div>
         <div>
-          <span>DNS</span>
+          <span>{t("stripDns")}</span>
           <strong>{stack?.dns ?? "—"}</strong>
         </div>
         <div className="path" title={stack?.root}>
-          <span>ROOT</span>
+          <span>{t("stripRoot")}</span>
           <strong>{stack?.root ?? "C:\\DevKit"}</strong>
         </div>
       </section>
@@ -464,14 +464,18 @@ export default function App() {
       <main className="grid">
         <section className="panel">
           <h2>{t("services")}</h2>
+          <p className="panel-lead">{t("servicesHint")}</p>
           <ul className="services">
             {stack?.services.map((s) => (
-              <li key={s.id}>
-                <i className={s.status} />
+              <li key={s.id} title={`${s.bind}:${s.port} · ${s.detail}`}>
+                <i className={s.status} aria-hidden />
                 <div>
                   <b>{s.display_name}</b>
                   <small>
-                    {s.bind}:{s.port} · {s.detail}
+                    <span className="svc-endpoint">
+                      {s.bind}:{s.port}
+                    </span>
+                    <span className="svc-detail">{s.detail}</span>
                   </small>
                 </div>
                 {s.status === "running" ? (
@@ -503,7 +507,10 @@ export default function App() {
 
         <section className="panel">
           <div className="panel-head">
-            <h2>{t("sites")}</h2>
+            <div>
+              <h2>{t("sites")}</h2>
+              <p className="panel-lead">{t("sitesHint")}</p>
+            </div>
             <button
               type="button"
               disabled={!!busy}
@@ -562,7 +569,8 @@ export default function App() {
               );
             }}
           >
-            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <p className="create-hint">{t("createHint")}</p>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label={t("createHint")}>
               <option value="blank">{t("kindBlank")}</option>
               <option value="laravel">{t("kindLaravel")}</option>
               <option value="wordpress">{t("kindWordpress")}</option>
@@ -585,7 +593,10 @@ export default function App() {
         </section>
         <section className="panel">
           <div className="panel-head">
-            <h2>{t("ports")}</h2>
+            <div>
+              <h2>{t("ports")}</h2>
+              <p className="panel-lead">{t("portsPanelHint")}</p>
+            </div>
             <button type="button" disabled={!!busy} onClick={openPortsModal}>
               {t("edit")}
             </button>
@@ -631,6 +642,7 @@ export default function App() {
         </button>
         <button
           type="button"
+          title={t("adminerTitle")}
           onClick={() =>
             runLight(async () => {
               const url = await invoke<string>("adminer_url");
@@ -660,6 +672,7 @@ export default function App() {
             className={moreOpen ? "tools-more-btn open" : "tools-more-btn"}
             aria-expanded={moreOpen}
             aria-haspopup="menu"
+            title={t("moreTitle")}
             onClick={() => setMoreOpen((o) => !o)}
           >
             {t("more")}
@@ -669,19 +682,23 @@ export default function App() {
               <p className="tools-group">
                 {t("moreVersion", { version: appVersion })}
               </p>
+              <p className="tools-group">{t("groupDevkit")}</p>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipSettings")}
                 onClick={() => {
                   setMoreOpen(false);
                   openAppModal();
                 }}
               >
-                {t("settings")}
+                <span className="menu-item-label">{t("settings")}</span>
+                <span className="menu-item-desc">{t("tipSettings")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipMcp")}
                 onClick={() => {
                   setMoreOpen(false);
                   setMcpOpen(true);
@@ -690,23 +707,27 @@ export default function App() {
                     .catch(() => setMcpInfo(null));
                 }}
               >
-                {t("mcp")}
+                <span className="menu-item-label">{t("mcp")}</span>
+                <span className="menu-item-desc">{t("tipMcp")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipSetupFull")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("setup", () => invoke("setup_stack", { full: true }));
                 }}
               >
-                {t("setupFull")}
+                <span className="menu-item-label">{t("setupFull")}</span>
+                <span className="menu-item-desc">{t("tipSetupFull")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipCheckUpdates")}
                 onClick={() => {
                   setMoreOpen(false);
                   setUpdateJobOpen(true);
@@ -718,23 +739,27 @@ export default function App() {
                   });
                 }}
               >
-                {t("checkUpdates")}
+                <span className="menu-item-label">{t("checkUpdates")}</span>
+                <span className="menu-item-desc">{t("tipCheckUpdates")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipSyncCron")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("cron-sync", () => invoke("cron_sync", { site: null }));
                 }}
               >
-                {t("syncCron")}
+                <span className="menu-item-label">{t("syncCron")}</span>
+                <span className="menu-item-desc">{t("tipSyncCron")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipScheduleUpdates")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("update-schedule", () =>
@@ -742,26 +767,29 @@ export default function App() {
                   );
                 }}
               >
-                {t("scheduleUpdates")}
+                <span className="menu-item-label">{t("scheduleUpdates")}</span>
+                <span className="menu-item-desc">{t("tipScheduleUpdates")}</span>
               </button>
 
               <p className="tools-group">{t("groupDb")}</p>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipCredentials")}
                 onClick={() => {
                   setMoreOpen(false);
                   openDbModal();
                 }}
               >
-                {t("credentials")}
+                <span className="menu-item-label">{t("credentials")}</span>
+                <span className="menu-item-desc">{t("tipCredentials")}</span>
               </button>
 
               <p className="tools-group">{t("groupNet")}</p>
               <button
                 type="button"
                 role="menuitem"
-                title={`Abrir http://127.0.0.1:${httpPort}/`}
+                title={t("tipOpenLocal")}
                 onClick={() => {
                   setMoreOpen(false);
                   runLight(async () => {
@@ -771,40 +799,48 @@ export default function App() {
                   });
                 }}
               >
-                {t("openLocal", { port: httpPort })}
+                <span className="menu-item-label">
+                  {t("openLocal", { port: httpPort })}
+                </span>
+                <span className="menu-item-desc">{t("tipOpenLocal")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipCheckPorts")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("ports", () => invoke("check_ports"));
                 }}
               >
-                {t("checkPorts")}
+                <span className="menu-item-label">{t("checkPorts")}</span>
+                <span className="menu-item-desc">{t("tipCheckPorts")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
+                title={t("tipEditPorts")}
                 onClick={() => {
                   setMoreOpen(false);
                   openPortsModal();
                 }}
               >
-                {t("editPorts")}
+                <span className="menu-item-label">{t("editPorts")}</span>
+                <span className="menu-item-desc">{t("tipEditPorts")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
-                title={t("updateHostsTitle")}
+                title={t("tipUpdateHosts")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("hosts", () => invoke("ensure_hosts"));
                 }}
               >
-                {t("updateHosts")}
+                <span className="menu-item-label">{t("updateHosts")}</span>
+                <span className="menu-item-desc">{t("tipUpdateHosts")}</span>
               </button>
 
               <p className="tools-group">{t("groupSystem")}</p>
@@ -812,23 +848,27 @@ export default function App() {
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipSsl")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("ssl", () => invoke("enable_ssl"));
                 }}
               >
-                {t("ssl")}
+                <span className="menu-item-label">{t("ssl")}</span>
+                <span className="menu-item-desc">{t("tipSsl")}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!!busy}
+                title={t("tipZip")}
                 onClick={() => {
                   setMoreOpen(false);
                   runHeavy("pack", () => invoke("pack_portable"));
                 }}
               >
-                {t("zip")}
+                <span className="menu-item-label">{t("zip")}</span>
+                <span className="menu-item-desc">{t("tipZip")}</span>
               </button>
             </div>
           )}
@@ -1355,7 +1395,7 @@ export default function App() {
                   <span className="settings-label">{t("pathScopeLabel")}</span>
                   <p className="settings-desc">{t("pathScopeDesc")}</p>
                 </div>
-                <div className="settings-control">
+                <div className="settings-control settings-control-col">
                   <select
                     className="settings-lang"
                     value={appDraft.path_scope}
@@ -1372,6 +1412,21 @@ export default function App() {
                     <option value="user">{t("pathScopeUser")}</option>
                     <option value="machine">{t("pathScopeMachine")}</option>
                   </select>
+                  <button
+                    type="button"
+                    className="mini"
+                    disabled={!!busy}
+                    title={t("pathApplyTitle")}
+                    onClick={() =>
+                      runHeavy("path-apply", () =>
+                        invoke<string>("apply_path_scope", {
+                          scope: appDraft.path_scope,
+                        }),
+                      )
+                    }
+                  >
+                    {t("pathApply")}
+                  </button>
                 </div>
               </div>
             </section>

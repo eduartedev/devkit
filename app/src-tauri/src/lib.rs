@@ -1,6 +1,7 @@
 use devkit_core::{
     build_mcp_release, mcp_exe_info, terminal, watch, AppConfig, AppSettings, AutoStartMode,
-    DbCredentials, DevKit, McpExeInfo, Paths, PhpExtensionInfo, PortsSettings, StackStatus,
+    DbCredentials, DevKit, McpExeInfo, PathEnvScope, Paths, PhpExtensionInfo, PortsSettings,
+    StackStatus,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -435,6 +436,17 @@ async fn update_app_settings(
 }
 
 #[tauri::command]
+async fn apply_path_scope(
+    state: State<'_, KitState>,
+    scope: PathEnvScope,
+) -> Result<String, String> {
+    with_heavy(&state, "path-apply", move |kit| {
+        kit.path_apply_scope(scope).map_err(map_err)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn regenerate_vhosts(state: State<'_, KitState>) -> Result<String, String> {
     with_heavy(&state, "vhosts", |kit| {
         kit.regenerate_vhosts().map_err(map_err)
@@ -606,6 +618,7 @@ pub fn run() {
             update_db_credentials,
             get_app_settings,
             update_app_settings,
+            apply_path_scope,
             regenerate_vhosts,
             open_site_vhost,
             list_php_extensions,
