@@ -10,8 +10,12 @@ Sirve para desarrollar y probar aplicaciones PHP en tu PC sin montar Nginx, PHP 
 
 - **HTTP/HTTPS** con Nginx (puerto HTTP por defecto `8080`, HTTPS `8443` tras configurar SSL)
 - **Varias versiones de PHP** (8.3, 8.4, 8.5) en `bin/php/`; cambia con `devkit php use`
+- **Python** (3.12, 3.13, 3.14) en `bin/python/`; sitios Flask/FastAPI/Django con venv; `devkit python use`
+- **Node** (LTS) en `bin/node/`; sitios Node/Express con proxy de Nginx
+- **Cron** por sitio con `www/<sitio>/.devkit-cron.toml` → Programador de tareas (`devkit cron sync`)
+- **Actualizaciones** de PHP/Python/Node (parches y majors): `devkit update check` → install → activate
 - **MariaDB** para bases locales; credenciales en `etc/devkit/secrets/`
-- **Opcional** Redis, Mailpit, mkcert, Node y Composer con `devkit setup --full`
+- **Opcional** Redis, Mailpit y mkcert con `devkit setup --full` (Node y Composer van en el setup básico)
 - **Sitios** como carpetas en `www/` → hostnames `nombre.<tld>` (TLD por defecto `test`)
 - **PHP con criterios de seguridad**: las descargas deben cumplir los parches mínimos de **php2shell**; el `php.ini` aplica mitigaciones recomendadas
 
@@ -42,8 +46,9 @@ El ejecutable queda en `target\release\devkit.exe`. Añádelo al PATH o ejecúta
 
 ```text
 devkit setup
-devkit setup --full          # Redis, Mailpit, mkcert; instala PHP 8.3, 8.4 y 8.5
-devkit setup --php 8.5       # Fija un major como versión activa
+devkit setup --full          # Redis, Mailpit, mkcert (PHP/Python: solo la major pedida o activa)
+devkit setup --php 8.5       # Fija un major de PHP como versión activa
+devkit setup --python 3.12   # Fija un major de Python como versión activa
 ```
 
 ### 3. Arrancar y comprobar
@@ -70,12 +75,23 @@ En **Configuración → General → Arranque** puedes activar: abrir con Windows
 ## Referencia CLI
 
 ```text
-devkit setup [--full] [--php 8.4|8.5]
+devkit setup [--full] [--php 8.4|8.5] [--python 3.12|3.13|3.14]
 devkit start | stop | status | ports | reload
 devkit php list | devkit php use 8.4
+devkit python list | devkit python use 3.13
 devkit create laravel mi-tienda
 devkit create wordpress mi-blog
 devkit create blank mi-api
+devkit create python mi-script
+devkit create flask mi-api
+devkit create fastapi mi-svc
+devkit create django mi-web
+devkit create node mi-api
+devkit create express mi-svc
+devkit cron list | sync | disable [sitio]
+devkit cron run <sitio> <job>
+devkit update check | install <id> | activate <id>
+devkit update schedule [--off] [--at 10:00]
 devkit ssl
 devkit pack
 devkit terminal

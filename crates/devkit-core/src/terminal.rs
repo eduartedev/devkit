@@ -80,6 +80,7 @@ mod tests {
     fn fs_layout(root: &std::path::Path) {
         std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
         std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::write(root.join("bin/composer/composer.phar"), b"phar").unwrap();
         std::fs::create_dir_all(root.join("www")).unwrap();
         std::fs::create_dir_all(root.join("etc/devkit")).unwrap();
         std::fs::create_dir_all(root.join("logs")).unwrap();

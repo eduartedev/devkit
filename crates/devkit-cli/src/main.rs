@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "devkit", about = "Entorno local portable (Nginx + PHP + MariaDB)", version)]
+#[command(name = "devkit", about = "Entorno local portable (Nginx + PHP/Python + MariaDB)", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -14,12 +14,15 @@ struct Cli {
 enum Commands {
     /// Descarga binarios oficiales (HTTPS + SHA-256)
     Setup {
-        /// Redis, Mailpit y mkcert. Node y Git van en el setup básico.
+        /// Redis, Mailpit y mkcert. Más majors de PHP/Python. Node, Git y Python van en el setup básico.
         #[arg(long)]
         full: bool,
         /// Major de PHP (8.3, 8.4 o 8.5)
         #[arg(long)]
         php: Option<String>,
+        /// Major de Python (3.12, 3.13 o 3.14)
+        #[arg(long)]
+        python: Option<String>,
     },
     /// Arranca el stack (detach por defecto)
     Start {
@@ -39,6 +42,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: PhpCmd,
     },
+    /// Cambia o lista versiones de Python
+    Python {
+        #[command(subcommand)]
+        cmd: PythonCmd,
+    },
     /// Crea un proyecto en www/
     Create {
         kind: String,
@@ -52,7 +60,7 @@ enum Commands {
     },
     /// Terminal con PATH de DevKit
     Terminal,
-    /// Añade PHP, MariaDB, Node, Git y Composer al PATH de Windows
+    /// Añade el CLI, PHP, Python, MariaDB, Node, Git y Composer al PATH de Windows
     Path {
         /// Quita las carpetas de este DevKit del PATH (usuario y sistema)
         #[arg(long)]
@@ -71,12 +79,28 @@ enum Commands {
         #[command(subcommand)]
         cmd: LogsCmd,
     },
+    /// Cron de scripts por sitio (Programador de tareas de Windows)
+    Cron {
+        #[command(subcommand)]
+        cmd: CronCmd,
+    },
+    /// Actualizaciones de PHP / Python / Node (parches y majors)
+    Update {
+        #[command(subcommand)]
+        cmd: UpdateCmd,
+    },
     #[command(hide = true)]
     DnsServe,
 }
 
 #[derive(Subcommand)]
 enum PhpCmd {
+    List,
+    Use { version: String },
+}
+
+#[derive(Subcommand)]
+enum PythonCmd {
     List,
     Use { version: String },
 }
@@ -111,6 +135,53 @@ enum LogsCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum CronCmd {
+    /// Lista jobs de `.devkit-cron.toml`
+    List {
+        site: Option<String>,
+    },
+    /// Registra/actualiza tareas en el Programador de Windows
+    Sync {
+        site: Option<String>,
+    },
+    /// Elimina las tareas programadas
+    Disable {
+        site: Option<String>,
+    },
+    /// Ejecuta un job (lo usa también el Programador de tareas)
+    Run {
+        site: String,
+        job: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Consulta PHP/Python/Node y guarda caché
+    Check {
+        /// Solo escribe caché (para la tarea programada)
+        #[arg(long)]
+        cache: bool,
+    },
+    /// Instala un candidato sin activarlo
+    Install {
+        id: String,
+    },
+    /// Activa un candidato ya instalado (use php/python o swap Node)
+    Activate {
+        id: String,
+    },
+    /// Programa o quita la comprobación semanal
+    Schedule {
+        #[arg(long)]
+        off: bool,
+        /// Hora HH:MM (lunes)
+        #[arg(long, default_value = "10:00")]
+        at: String,
+    },
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -125,8 +196,8 @@ fn run() -> devkit_core::Result<()> {
     let cli = Cli::parse();
     let mut kit = DevKit::load()?;
     match cli.cmd {
-        Commands::Setup { full, php } => {
-            for line in kit.setup(full, php.as_deref())? {
+        Commands::Setup { full, php, python } => {
+            for line in kit.setup(full, php.as_deref(), python.as_deref())? {
                 println!("{line}");
             }
         }
@@ -202,9 +273,28 @@ fn run() -> devkit_core::Result<()> {
                 println!("PHP {version} activo");
             }
         },
+        Commands::Python { cmd } => match cmd {
+            PythonCmd::List => {
+                println!("activo: {}", kit.config.python_version);
+                for v in kit.python_versions()? {
+                    println!("{v}");
+                }
+            }
+            PythonCmd::Use { version } => {
+                kit.use_python(&version)?;
+                println!("Python {version} activo");
+            }
+        },
         Commands::Create { kind, name } => {
             let p = kit.create_site_with_log(&kind, &name, &mut |line| print!("{line}"))?;
-            if kind != "laravel" {
+            if kind != "laravel"
+                && kind != "python"
+                && kind != "flask"
+                && kind != "fastapi"
+                && kind != "django"
+                && kind != "node"
+                && kind != "express"
+            {
                 println!("{}", p.display());
             }
         }
@@ -273,6 +363,91 @@ fn run() -> devkit_core::Result<()> {
                 }
             }
         },
+        Commands::Cron { cmd } => match cmd {
+            CronCmd::List { site } => {
+                let jobs = kit.cron_list(site.as_deref())?;
+                if jobs.is_empty() {
+                    println!("(sin jobs; crea www/<sitio>/.devkit-cron.toml y ejecuta sync)");
+                }
+                for j in jobs {
+                    let reg = if j.registered { "ok" } else { "-" };
+                    println!(
+                        "[{reg}] {}/{}  {} {}  {}  {}",
+                        j.site,
+                        j.id,
+                        j.every,
+                        j.at,
+                        j.argv.join(" "),
+                        j.task_name
+                    );
+                }
+            }
+            CronCmd::Sync { site } => {
+                for line in kit.cron_sync(site.as_deref())? {
+                    println!("{line}");
+                }
+            }
+            CronCmd::Disable { site } => {
+                let lines = kit.cron_disable(site.as_deref())?;
+                if lines.is_empty() {
+                    println!("(nada que desactivar)");
+                }
+                for line in lines {
+                    println!("{line}");
+                }
+            }
+            CronCmd::Run { site, job } => {
+                kit.cron_run(&site, &job, &mut |line| print!("{line}"))?;
+            }
+        },
+        Commands::Update { cmd } => match cmd {
+            UpdateCmd::Check { cache } => {
+                let list = kit.update_check()?;
+                if !cache {
+                    if list.is_empty() {
+                        println!("todo al día");
+                    }
+                    for c in &list {
+                        println!(
+                            "  {}  [{}/{}]  {} → {}  ({})",
+                            c.id,
+                            c.component.as_str(),
+                            c.kind.as_str(),
+                            c.installed,
+                            c.available,
+                            c.detail
+                        );
+                    }
+                    println!(
+                        "siguiente: devkit update install <id>  luego  devkit update activate <id>"
+                    );
+                } else {
+                    println!("caché: {} candidato(s)", list.len());
+                }
+            }
+            UpdateCmd::Install { id } => {
+                let cand =
+                    kit.update_install(&id, &mut |line| print!("{line}"))?;
+                println!(
+                    "instalado {} ({}). ¿Activar? → devkit update activate {}",
+                    cand.id, cand.available, cand.id
+                );
+            }
+            UpdateCmd::Activate { id } => {
+                println!("{}", kit.update_activate(&id)?);
+            }
+            UpdateCmd::Schedule { off, at } => {
+                println!("{}", kit.update_schedule(!off, &at)?);
+                println!(
+                    "programada={}",
+                    if kit.update_schedule_status() {
+                        "sí"
+                    } else {
+                        "no"
+                    }
+                );
+            }
+        },
         Commands::DnsServe => {
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let handle = devkit_core::dns::spawn(stop.clone())?;
@@ -288,6 +463,12 @@ fn run() -> devkit_core::Result<()> {
 fn print_status(st: &devkit_core::StackStatus) {
     println!("root {}", st.root.display());
     println!("php  {}", st.php_version);
+    if !st.python_version.is_empty() {
+        println!("python {}", st.python_version);
+    }
+    if st.node_ready {
+        println!("node  ready");
+    }
     println!("dns  {}", st.dns);
     for s in &st.services {
         println!(

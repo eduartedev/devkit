@@ -13,6 +13,7 @@ redis_port = 6379
 mailpit_smtp = 1025
 mailpit_ui = 8025
 php_version = "8.3"
+python_version = "3.13"
 ssl = false
 tld = "test"
 follow_www_junctions = true

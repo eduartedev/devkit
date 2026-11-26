@@ -81,6 +81,15 @@ pub struct ServiceSnapshot {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SiteKind {
+    #[default]
+    Php,
+    Python,
+    Node,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Site {
     pub name: String,
@@ -89,12 +98,28 @@ pub struct Site {
     pub php_version: String,
     pub ssl: bool,
     pub url: String,
+    #[serde(default)]
+    pub kind: SiteKind,
+    #[serde(default)]
+    pub python_version: Option<String>,
+    #[serde(default)]
+    pub python_runtime: Option<String>,
+    #[serde(default)]
+    pub python_port: Option<u16>,
+    #[serde(default)]
+    pub node_runtime: Option<String>,
+    #[serde(default)]
+    pub node_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StackStatus {
     pub root: PathBuf,
     pub php_version: String,
+    #[serde(default)]
+    pub python_version: String,
+    #[serde(default)]
+    pub node_ready: bool,
     pub services: Vec<ServiceSnapshot>,
     pub sites: Vec<Site>,
     pub dns: String,
