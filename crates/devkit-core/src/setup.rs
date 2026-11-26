@@ -118,6 +118,7 @@ fn import_offline_bundle(offline: &std::path::Path, paths: &Paths) -> Result<()>
     if www.is_dir() {
         copy_dir_contents(&www, &paths.www)?;
     }
+    paths.ensure_composer_shim()?;
     Ok(())
 }
 
@@ -428,6 +429,7 @@ fn install_composer(paths: &Paths, report: &mut SetupReport) -> Result<()> {
             )?;
         }
     }
+    paths.ensure_composer_shim()?;
     report.push("composer: instalado");
     Ok(())
 }

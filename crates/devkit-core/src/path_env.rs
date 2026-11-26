@@ -31,7 +31,9 @@ pub fn devkit_path_dirs(paths: &Paths, cfg: &AppConfig) -> Vec<String> {
             push_dir(&mut out, cmd.to_path_buf());
         }
     }
-    push_dir(&mut out, paths.bin.join("composer"));
+    if paths.composer().is_file() {
+        push_dir(&mut out, paths.bin.join("composer"));
+    }
     out
 }
 
@@ -288,6 +290,7 @@ mod tests {
         let root = dir.path();
         std::fs::create_dir_all(root.join("bin/php/8.3")).unwrap();
         std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::write(root.join("bin/composer/composer.phar"), b"phar").unwrap();
         let paths = Paths::from_root(root.to_path_buf());
         let cfg = AppConfig::default();
         let without = devkit_path_dirs(&paths, &cfg);
@@ -318,6 +321,7 @@ mod tests {
         std::fs::create_dir_all(root.join("bin/git/cmd")).unwrap();
         std::fs::write(root.join("bin/git/cmd/git.exe"), []).unwrap();
         std::fs::create_dir_all(root.join("bin/composer")).unwrap();
+        std::fs::write(root.join("bin/composer/composer.phar"), b"phar").unwrap();
         let paths = Paths::from_root(root.to_path_buf());
         let cfg = AppConfig {
             php_version: "8.4".into(),

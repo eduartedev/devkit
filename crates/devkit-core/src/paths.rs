@@ -79,6 +79,7 @@ impl Paths {
         if !marker.exists() {
             fs::write(marker, "devkit\n")?;
         }
+        self.ensure_composer_shim()?;
         Ok(())
     }
 
@@ -194,6 +195,21 @@ impl Paths {
 
     pub fn composer(&self) -> PathBuf {
         self.bin.join("composer").join("composer.phar")
+    }
+
+    /// `composer.bat` para que `composer` resuelva en PATH (`bin/composer` ya va en PATH).
+    /// Usa el `php` primero en PATH, que dentro de DevKit es el PHP activo.
+    pub fn ensure_composer_shim(&self) -> Result<()> {
+        if !self.composer().is_file() {
+            return Ok(());
+        }
+        const SHIM: &str = "@echo off\r\nphp \"%~dp0composer.phar\" %*\r\n";
+        let bat = self.bin.join("composer").join("composer.bat");
+        if fs::read_to_string(&bat).ok().as_deref() == Some(SHIM) {
+            return Ok(());
+        }
+        fs::write(&bat, SHIM)?;
+        Ok(())
     }
 
     pub fn secrets_dir(&self) -> PathBuf {
